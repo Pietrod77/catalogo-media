@@ -93,6 +93,22 @@ Per i casi ambigui (2-3 nomi candidati vicini alla soglia), l'interfaccia mostra
 3. Ogni conferma/correzione/nuovo nome salva immediatamente il nuovo embedding nel DB legato al `person_id` corretto (apprendimento incrementale, nessun batch da rilanciare).
 4. Bottone "Conferma tutto" per applicare in blocco le scelte fatte sull'intera griglia della sessione.
 
+## Uso da più computer
+
+Requisito emerso: Pietro potrebbe dover usare lo strumento da computer diversi in futuro (non ancora certo se tutti Mac o anche altri sistemi). Lo stack scelto (Python, onnxruntime/InsightFace, Flask, SQLite, exiftool) è già cross-platform, quindi non serve cambiare le decisioni tecniche — bastano alcune accortezze:
+
+**Cosa deve sincronizzarsi tra i computer (via Dropbox, dato che il progetto vive già in `~/Dropbox/Volti_Riconoscimento/`):**
+- Il codice (già gestito da git, e comunque dentro Dropbox).
+- `db/volti.db` — è il dato di valore (embedding + nomi), deve essere lo stesso su tutti i computer.
+
+**Cosa NON deve sincronizzarsi:**
+- `venv/` — un virtualenv compilato è specifico di macchina/architettura; va ricreato localmente su ogni computer da `requirements.txt`, non sincronizzato. Su Mac si esclude dalla sync di Dropbox con un comando one-time: `xattr -w com.dropbox.ignored 1 venv` (va rilanciato su ogni singolo computer, è un'impostazione locale).
+- La cache del modello InsightFace (scaricata di default fuori dal progetto, in `~/.insightface`) — resta naturalmente locale a ogni macchina, nessuna azione necessaria.
+
+**Regola d'oro per evitare corruzione del DB condiviso via Dropbox:** non tenere l'app aperta su due computer contemporaneamente. SQLite non è pensato per essere scritto da due processi su file sincronizzati via cloud in parallelo — si rischiano conflitti o "file in conflitto" generati da Dropbox. In pratica: chiudere l'app prima di passare a un altro computer, e aspettare che Dropbox abbia finito di sincronizzare (icona di stato) prima di riaprirla altrove. Per lo stesso motivo, il DB va tenuto in modalità journal SQLite di default (non WAL): la modalità WAL crea file `.db-wal`/`.db-shm` separati dal `.db` principale, che se sincronizzati in momenti diversi da Dropbox possono lasciare una copia inconsistente sull'altro computer.
+
+**Setup su un nuovo computer:** aprire la cartella già sincronizzata da Dropbox, creare un virtualenv locale (`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt`), verificare che `exiftool` sia installato localmente (via Homebrew su Mac, o l'equivalente sul sistema in uso), poi lanciare `app.py` — il DB è già lì, sincronizzato.
+
 ## Struttura del progetto
 
 Percorso: `~/Dropbox/Volti_Riconoscimento/`
