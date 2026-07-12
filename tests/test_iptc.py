@@ -49,3 +49,28 @@ def test_leggi_nomi_ritorna_lista_vuota_se_personality_assente(tmp_path):
     _crea_foto_di_prova(percorso, None)
 
     assert leggi_nomi(percorso) == []
+
+
+def _crea_foto_di_prova_lista_xmp(percorso: Path, nomi: list[str]) -> None:
+    """Crea una foto JPG minima e scrive Personality come vera lista XMP
+    (non come stringa unica con virgole), replicando il formato con cui
+    l'archivio reale (Capture One / Getty) salva più nomi taggati.
+    """
+    Image.new("RGB", (10, 10), color="red").save(percorso)
+    comando = ["exiftool", "-overwrite_original"]
+    for indice, nome in enumerate(nomi):
+        operatore = "=" if indice == 0 else "+="
+        comando.append(f"-XMP-getty:Personality{operatore}{nome}")
+    comando.append(str(percorso))
+    subprocess.run(comando, check=True, capture_output=True)
+
+
+def test_leggi_nomi_gestisce_personality_come_lista_xmp(tmp_path):
+    """Riproduce il bug reale: exiftool -j ritorna Personality come array JSON
+    quando il tag è stato scritto come lista XMP a valori multipli (workflow
+    Capture One / Getty), non come stringa unica separata da virgole.
+    """
+    percorso = tmp_path / "foto_lista_xmp.jpg"
+    _crea_foto_di_prova_lista_xmp(percorso, ["Mario Rossi", "Anna Bianchi"])
+
+    assert leggi_nomi(percorso) == ["Mario Rossi", "Anna Bianchi"]
