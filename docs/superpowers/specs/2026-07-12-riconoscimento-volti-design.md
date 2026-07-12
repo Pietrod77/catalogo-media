@@ -34,7 +34,16 @@ Contro accettato: modello da scaricare al primo avvio (~300MB), one-time, poi tu
 
 ### Lettura metadati IPTC: exiftool via subprocess
 
-Già installato sul Mac di Pietro, standard più affidabile di `iptcinfo3` (poco mantenuto, gestisce peggio i casi limite). Prima di scrivere il parser definitivo va ispezionato un campione reale dell'archivio per confermare quale campo IPTC è popolato (`Object Name`, `Caption/Abstract`, o altro).
+Già installato sul Mac di Pietro, standard più affidabile di `iptcinfo3` (poco mantenuto, gestisce peggio i casi limite).
+
+**Campo confermato su campione reale (113 foto in `~/Desktop/_prova export per nomi/`, Milano/Parigi Fashion Week giugno-luglio 2026, credit Getty Images):** il nome pulito della persona è nel campo `XMP-getty:Personality` (namespace custom di Getty Images), non nei campi IPTC standard ipotizzati inizialmente (`Object Name`, `Caption-Abstract`). `Caption-Abstract` contiene solo la frase descrittiva completa (utile eventualmente come fallback/cross-check, non come fonte primaria).
+
+Pattern osservato sul campione:
+- 111/113 foto con `Personality` valorizzato.
+- 2/113 con `Personality` vuoto → foto di un "guest" non identificato, da scartare (`iptc_mancante`).
+- 20/113 (~18%) con più nomi separati da virgola nello stesso campo (es. `"Joseph Annunziata, Victoria Stella Doritou"`) per foto con più soggetti taggati.
+
+Il caso "più nomi in Personality + più volti rilevati nella foto" non ha un abbinamento nome↔volto esplicito nell'IPTC: si applica comunque la regola conservativa già definita (skip se >1 volto rilevato, log in `log_scarti` con motivo `volti_multipli` per revisione manuale), sapendo ora che riguarda una quota non trascurabile delle foto (~18% nel campione). Possibile miglioramento futuro (non nello scope della Fase 2/3): un abbinamento assistito volto↔nome in fase di revisione manuale invece dello skip totale.
 
 ### Database: SQLite, nessun FAISS
 
