@@ -1,0 +1,8 @@
+venv/
+db/*.db
+db/*.db-*
+logs/
+sessioni/
+__pycache__/
+*.pyc
+.DS_Store
