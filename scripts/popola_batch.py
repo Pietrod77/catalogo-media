@@ -19,6 +19,7 @@ from core.iptc import leggi_nomi
 from core.volti import rileva_volti
 from db.database import (
     connetti,
+    foto_gia_processata,
     init_db,
     registra_scarto,
     salva_embedding,
@@ -47,7 +48,8 @@ def popola_da_cartella(cartella: Path, percorso_db: Path) -> dict[str, int]:
     """Elabora tutte le foto JPG in cartella (ricorsivo) e popola il DB.
 
     Ritorna un riepilogo: {'salvate': N, 'iptc_mancante': N, 'nessun_volto': N,
-    'volti_multipli': N, 'iptc_non_parsabile': N, 'errore_lettura_immagine': N}.
+    'volti_multipli': N, 'iptc_non_parsabile': N, 'errore_lettura_immagine': N,
+    'gia_processata': N}.
     """
     init_db(percorso_db)
     conn = connetti(percorso_db)
@@ -58,6 +60,7 @@ def popola_da_cartella(cartella: Path, percorso_db: Path) -> dict[str, int]:
         "volti_multipli": 0,
         "iptc_non_parsabile": 0,
         "errore_lettura_immagine": 0,
+        "gia_processata": 0,
     }
 
     foto_trovate = sorted(
@@ -70,6 +73,11 @@ def popola_da_cartella(cartella: Path, percorso_db: Path) -> dict[str, int]:
     )
 
     for foto in foto_trovate:
+        if foto_gia_processata(conn, str(foto)):
+            riepilogo["gia_processata"] += 1
+            print(f"[gia_processata] {foto.name}")
+            continue
+
         try:
             nomi = leggi_nomi(foto)
         except Exception as errore:

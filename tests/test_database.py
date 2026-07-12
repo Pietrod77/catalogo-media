@@ -72,7 +72,12 @@ def test_foreign_key_person_id_inesistente_solleva_integrity_error(tmp_path):
 
 import numpy as np
 
-from db.database import trova_o_crea_persona, salva_embedding, registra_scarto
+from db.database import (
+    trova_o_crea_persona,
+    salva_embedding,
+    registra_scarto,
+    foto_gia_processata,
+)
 
 
 def test_trova_o_crea_persona_crea_nuova_persona(tmp_path):
@@ -139,3 +144,39 @@ def test_registra_scarto_inserisce_riga(tmp_path):
     conn.close()
     assert riga[0] == "foto_scartata.jpg"
     assert riga[1] == "nessun_volto"
+
+
+def test_foto_gia_processata_ritorna_false_se_nessuna_riga(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+
+    risultato = foto_gia_processata(conn, "foto_mai_vista.jpg")
+    conn.close()
+    assert risultato is False
+
+
+def test_foto_gia_processata_ritorna_true_dopo_salva_embedding(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+    person_id = trova_o_crea_persona(conn, "Mario Rossi")
+    vettore = np.random.rand(512).astype(np.float32)
+
+    salva_embedding(conn, person_id, vettore, "foto_salvata.jpg", "batch_iniziale")
+
+    risultato = foto_gia_processata(conn, "foto_salvata.jpg")
+    conn.close()
+    assert risultato is True
+
+
+def test_foto_gia_processata_ritorna_true_dopo_registra_scarto(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+
+    registra_scarto(conn, "foto_scartata.jpg", "nessun_volto")
+
+    risultato = foto_gia_processata(conn, "foto_scartata.jpg")
+    conn.close()
+    assert risultato is True

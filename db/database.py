@@ -76,6 +76,25 @@ def salva_embedding(
     return cursor.lastrowid
 
 
+def foto_gia_processata(conn: sqlite3.Connection, foto: str) -> bool:
+    """Ritorna True se la foto è già stata salvata o scartata in un run precedente."""
+    if (
+        conn.execute(
+            "SELECT 1 FROM embedding WHERE foto_origine = ? LIMIT 1", (foto,)
+        ).fetchone()
+        is not None
+    ):
+        return True
+    if (
+        conn.execute(
+            "SELECT 1 FROM log_scarti WHERE foto = ? LIMIT 1", (foto,)
+        ).fetchone()
+        is not None
+    ):
+        return True
+    return False
+
+
 def registra_scarto(conn: sqlite3.Connection, foto: str, motivo: str) -> int:
     """Registra una foto scartata durante il popolamento. Ritorna l'id della riga creata."""
     cursor = conn.execute(
