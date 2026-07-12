@@ -68,3 +68,74 @@ def test_foreign_key_person_id_inesistente_solleva_integrity_error(tmp_path):
             )
     finally:
         conn.close()
+
+
+import numpy as np
+
+from db.database import trova_o_crea_persona, salva_embedding, registra_scarto
+
+
+def test_trova_o_crea_persona_crea_nuova_persona(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+
+    person_id = trova_o_crea_persona(conn, "Mario Rossi")
+
+    riga = conn.execute(
+        "SELECT nome FROM persone WHERE id = ?", (person_id,)
+    ).fetchone()
+    conn.close()
+    assert riga[0] == "Mario Rossi"
+
+
+def test_trova_o_crea_persona_riusa_persona_esistente(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+
+    primo_id = trova_o_crea_persona(conn, "Mario Rossi")
+    secondo_id = trova_o_crea_persona(conn, "Mario Rossi")
+
+    conteggio = conn.execute("SELECT COUNT(*) FROM persone").fetchone()[0]
+    conn.close()
+    assert primo_id == secondo_id
+    assert conteggio == 1
+
+
+def test_salva_embedding_inserisce_e_recupera_vettore(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+    person_id = trova_o_crea_persona(conn, "Mario Rossi")
+    vettore_originale = np.random.rand(512).astype(np.float32)
+
+    embedding_id = salva_embedding(
+        conn, person_id, vettore_originale, "foto.jpg", "batch_iniziale"
+    )
+
+    riga = conn.execute(
+        "SELECT vettore, person_id, foto_origine, fonte FROM embedding WHERE id = ?",
+        (embedding_id,),
+    ).fetchone()
+    conn.close()
+    vettore_recuperato = np.frombuffer(riga[0], dtype=np.float32)
+    assert np.array_equal(vettore_recuperato, vettore_originale)
+    assert riga[1] == person_id
+    assert riga[2] == "foto.jpg"
+    assert riga[3] == "batch_iniziale"
+
+
+def test_registra_scarto_inserisce_riga(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+
+    scarto_id = registra_scarto(conn, "foto_scartata.jpg", "nessun_volto")
+
+    riga = conn.execute(
+        "SELECT foto, motivo FROM log_scarti WHERE id = ?", (scarto_id,)
+    ).fetchone()
+    conn.close()
+    assert riga[0] == "foto_scartata.jpg"
+    assert riga[1] == "nessun_volto"

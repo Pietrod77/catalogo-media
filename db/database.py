@@ -3,6 +3,8 @@
 import sqlite3
 from pathlib import Path
 
+import numpy as np
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS persone (
     id INTEGER PRIMARY KEY,
@@ -45,3 +47,39 @@ def init_db(percorso_db: str | Path) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def trova_o_crea_persona(conn: sqlite3.Connection, nome: str) -> int:
+    """Ritorna l'id della persona con quel nome, creandola se non esiste già."""
+    riga = conn.execute("SELECT id FROM persone WHERE nome = ?", (nome,)).fetchone()
+    if riga is not None:
+        return riga[0]
+    cursor = conn.execute("INSERT INTO persone (nome) VALUES (?)", (nome,))
+    conn.commit()
+    return cursor.lastrowid
+
+
+def salva_embedding(
+    conn: sqlite3.Connection,
+    person_id: int,
+    vettore: np.ndarray,
+    foto_origine: str,
+    fonte: str,
+) -> int:
+    """Inserisce un embedding legato a una persona. Ritorna l'id della riga creata."""
+    cursor = conn.execute(
+        "INSERT INTO embedding (person_id, vettore, foto_origine, fonte) "
+        "VALUES (?, ?, ?, ?)",
+        (person_id, vettore.astype(np.float32).tobytes(), foto_origine, fonte),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def registra_scarto(conn: sqlite3.Connection, foto: str, motivo: str) -> int:
+    """Registra una foto scartata durante il popolamento. Ritorna l'id della riga creata."""
+    cursor = conn.execute(
+        "INSERT INTO log_scarti (foto, motivo) VALUES (?, ?)", (foto, motivo)
+    )
+    conn.commit()
+    return cursor.lastrowid
