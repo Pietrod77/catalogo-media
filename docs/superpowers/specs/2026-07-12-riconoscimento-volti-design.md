@@ -82,6 +82,21 @@ Ogni embedding viene salvato singolarmente, legato a un `person_id`, invece di e
 
 Motivazione: se una persona ha foto molto diverse tra loro (scatto professionale frontale ben illuminato vs foto backstage sfocata di profilo), la media dei vettori può cadere in una "terra di mezzo" che non assomiglia bene a nessuna delle due condizioni, peggiorando il matching. Alla scala prevista, confrontare un volto nuovo contro tutti gli embedding esistenti in DB è comunque questione di millisecondi con numpy vettorizzato — non serve ottimizzare aggregando.
 
+### Soglie di matching, calibrate sui dati reali
+
+Con il DB popolato dalla Fase 2 (64 embedding, 16 persone, alcune con più foto), è stata calcolata empiricamente la distribuzione delle similarità coseno (dot product, essendo gli embedding di InsightFace già normalizzati L2):
+
+- Similarità intra-persona (stessa persona, foto diverse): min 0.470, media 0.825, max 0.967 (146 coppie).
+- Similarità inter-persona (persone diverse): min -0.165, media 0.013, max 0.238 (1870 coppie).
+
+Nessuna sovrapposizione tra le due distribuzioni in questo campione: separazione netta tra 0.238 (massimo inter-persona) e 0.470 (minimo intra-persona). Soglie scelte con margine:
+
+- **Soglia alta (match certo): 0.45** — sopra questo valore, oltre il massimo osservato tra persone diverse con ampio margine.
+- **Soglia bassa (sconosciuto sotto questa soglia): 0.30** — margine di sicurezza sotto la soglia alta per la fascia "ambiguo".
+- Tra 0.30 e 0.45: match ambiguo, da mostrare come candidato ma non confermare automaticamente.
+
+Queste soglie andranno ricalibrate quando il DB crescerà (più persone → più probabilità di falsi positivi vicino alla soglia), ma sono un punto di partenza solido basato su dati reali invece che su valori di letteratura generici.
+
 In fase di matching: calcolo la similarità coseno del volto nuovo contro tutti gli embedding in DB, poi aggrego per persona prendendo **la media dei migliori 3 match** per quella persona (non il singolo migliore, per evitare falsi positivi isolati da un embedding anomalo). Se una persona ha meno di 3 embedding, si usa la media di quelli disponibili.
 
 Conseguenza positiva: ogni conferma nella web UI aggiunge un nuovo embedding "sul campo" (luce, angolo, evento reali) per quella persona, migliorando naturalmente il matching nel tempo — è il meccanismo di apprendimento incrementale.
