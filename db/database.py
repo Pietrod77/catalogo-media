@@ -33,6 +33,7 @@ def connetti(percorso_db: str | Path) -> sqlite3.Connection:
     """Apre una connessione al DB. Modalità journal di default (non WAL),
     per compatibilità con la sincronizzazione via Dropbox su più computer."""
     conn = sqlite3.connect(str(percorso_db))
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 

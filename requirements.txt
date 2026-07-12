@@ -1,7 +1,7 @@
-insightface
-onnxruntime
+insightface==1.0.1
+onnxruntime==1.27.0
 opencv-python
-numpy
+numpy==2.5.1
 flask
 pillow
 pytest

@@ -1,5 +1,6 @@
 import sqlite3
-from pathlib import Path
+
+import pytest
 
 from db.database import init_db, connetti
 
@@ -40,3 +41,30 @@ def test_connetti_usa_journal_mode_default_non_wal(tmp_path):
     conn.close()
 
     assert modalita.lower() != "wal"
+
+
+def test_connetti_attiva_foreign_keys(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+    stato = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    conn.close()
+
+    assert stato == 1
+
+
+def test_foreign_key_person_id_inesistente_solleva_integrity_error(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO embedding (person_id, vettore, foto_origine, fonte) "
+                "VALUES (?, ?, ?, ?)",
+                (999, b"\x00", "foto.jpg", "test"),
+            )
+    finally:
+        conn.close()
