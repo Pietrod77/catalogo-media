@@ -9,6 +9,7 @@ Salva nel DB solo i casi puliti (esattamente 1 volto e 1 nome); tutti gli
 altri casi vengono registrati in log_scarti per revisione manuale.
 """
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -46,7 +47,7 @@ def popola_da_cartella(cartella: Path, percorso_db: Path) -> dict[str, int]:
     """Elabora tutte le foto JPG in cartella (ricorsivo) e popola il DB.
 
     Ritorna un riepilogo: {'salvate': N, 'iptc_mancante': N, 'nessun_volto': N,
-    'volti_multipli': N, 'iptc_non_parsabile': N}.
+    'volti_multipli': N, 'iptc_non_parsabile': N, 'errore_lettura_immagine': N}.
     """
     init_db(percorso_db)
     conn = connetti(percorso_db)
@@ -56,6 +57,7 @@ def popola_da_cartella(cartella: Path, percorso_db: Path) -> dict[str, int]:
         "nessun_volto": 0,
         "volti_multipli": 0,
         "iptc_non_parsabile": 0,
+        "errore_lettura_immagine": 0,
     }
 
     foto_trovate = sorted(
@@ -76,7 +78,14 @@ def popola_da_cartella(cartella: Path, percorso_db: Path) -> dict[str, int]:
             print(f"[iptc_non_parsabile] {foto.name}: {errore}")
             continue
 
-        volti = rileva_volti(foto)
+        try:
+            volti = rileva_volti(foto)
+        except Exception as errore:
+            registra_scarto(conn, str(foto), "errore_lettura_immagine")
+            riepilogo["errore_lettura_immagine"] += 1
+            print(f"[errore_lettura_immagine] {foto.name}: {errore}")
+            continue
+
         motivo = classifica_caso(nomi, volti)
 
         if motivo is not None:
@@ -102,6 +111,10 @@ def main() -> int:
     cartella = Path(sys.argv[1])
     if not cartella.is_dir():
         print(f"Cartella non trovata: {cartella}")
+        return 1
+
+    if shutil.which("exiftool") is None:
+        print("exiftool non trovato. Installalo con: brew install exiftool")
         return 1
 
     riepilogo = popola_da_cartella(cartella, PERCORSO_DB_DEFAULT)
