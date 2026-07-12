@@ -1,6 +1,6 @@
 insightface
 onnxruntime
-opencv-python-headless
+opencv-python
 numpy
 flask
 pillow
