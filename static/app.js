@@ -210,8 +210,7 @@ function confermaNome(volto, nome) {
             }
         })
         .catch((errore) => {
-            risultatoDiv.innerHTML = '<p class="errore">Errore di rete, riprova.</p>';
-            // Re-enable buttons for retry
+            // Re-enable buttons for retry BEFORE modifying DOM
             const pulsanti = risultatoDiv.querySelectorAll("button");
             pulsanti.forEach((pulsante) => {
                 pulsante.disabled = false;
@@ -221,5 +220,11 @@ function confermaNome(volto, nome) {
             candidati.forEach((candidato) => {
                 candidato.style.pointerEvents = "";
             });
+
+            // Append error message instead of replacing DOM
+            const messaggioErrore = document.createElement("p");
+            messaggioErrore.className = "errore";
+            messaggioErrore.textContent = "Errore di rete, riprova.";
+            risultatoDiv.appendChild(messaggioErrore);
         });
 }

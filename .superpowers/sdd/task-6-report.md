@@ -107,3 +107,22 @@ Applied targeted fixes to address 3 important review findings:
 - State transitions work properly (correggi and nessuno link to free-text form with clean state)
 - Network errors show feedback and allow retry
 - No stale DOM elements remain after corrections
+
+## Fix per re-review: Finding on `/conferma` catch handler (Line 212-226)
+
+### Issue
+The catch handler for `/conferma` fetch (line 212-226) wiped the DOM with `risultatoDiv.innerHTML = '...'` BEFORE attempting to re-enable buttons and clear candidati guards. Since `innerHTML` destroys all child elements, the subsequent `querySelectorAll("button")` and `querySelectorAll(".candidato")` queries ran against an empty container and returned empty NodeLists. The re-enable logic was dead code that never executed. After a network error during `/conferma`, the user saw only an error message—the crop preview, candidate list, and buttons were gone, forcing them to re-upload the image.
+
+### Fix Applied (Lines 212-226)
+Reordered the catch handler to:
+1. Query and re-enable all buttons (`.disabled = false`) BEFORE modifying the DOM
+2. Clear `pointer-events` guard from all candidati BEFORE modifying the DOM
+3. Append the error message via `appendChild()` instead of `innerHTML` assignment
+
+This preserves the crop preview, candidate list, and buttons in the DOM. After network error, the user sees the error message alongside the still-live UI and can immediately retry by clicking the button or candidate again.
+
+**Verified**: Re-read the fixed function (lines 212-226). The logic now correctly:
+- Selects buttons/candidati from the live DOM (before it's modified)
+- Re-enables them so clicks are processed
+- Appends (not replaces) error message
+- Leaves crop preview and UI state intact for retry
