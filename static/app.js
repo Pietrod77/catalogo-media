@@ -53,6 +53,9 @@ function gestisciFile(file) {
                 return;
             }
             mostraVolti(dati.volti);
+        })
+        .catch((errore) => {
+            risultatoDiv.innerHTML = '<p class="errore">Errore di rete, riprova.</p>';
         });
 }
 
@@ -130,7 +133,14 @@ function mostraAmbiguo(volto) {
             <img src="/riferimento?path=${encodeURIComponent(candidato.foto_riferimento)}" class="miniatura-riferimento">
             <span>${candidato.nome} (${candidato.punteggio.toFixed(3)})</span>
         `;
-        voce.addEventListener("click", () => confermaNome(volto, candidato.nome));
+        voce.addEventListener("click", () => {
+            // Guard against double-click: disable all candidati
+            const tuttiCandidati = lista.querySelectorAll(".candidato");
+            tuttiCandidati.forEach((cd) => {
+                cd.style.pointerEvents = "none";
+            });
+            confermaNome(volto, candidato.nome);
+        });
         lista.appendChild(voce);
     });
     risultatoDiv.appendChild(lista);
@@ -146,10 +156,13 @@ function mostraAmbiguo(volto) {
 }
 
 function mostraNomeLibero(volto) {
-    const esistente = document.getElementById("form-nome-libero");
-    if (esistente) {
-        esistente.remove();
-    }
+    // Remove all children except the crop preview image
+    const figli = Array.from(risultatoDiv.children);
+    figli.forEach((figlio) => {
+        if (!figlio.classList.contains("crop-volto")) {
+            figlio.remove();
+        }
+    });
 
     const form = document.createElement("div");
     form.id = "form-nome-libero";
@@ -195,5 +208,18 @@ function confermaNome(volto, nome) {
             } else {
                 risultatoDiv.innerHTML = `<p class="errore">${dati.errore}</p>`;
             }
+        })
+        .catch((errore) => {
+            risultatoDiv.innerHTML = '<p class="errore">Errore di rete, riprova.</p>';
+            // Re-enable buttons for retry
+            const pulsanti = risultatoDiv.querySelectorAll("button");
+            pulsanti.forEach((pulsante) => {
+                pulsante.disabled = false;
+            });
+            // Remove pointer-events guard from candidati
+            const candidati = risultatoDiv.querySelectorAll(".candidato");
+            candidati.forEach((candidato) => {
+                candidato.style.pointerEvents = "";
+            });
         });
 }
