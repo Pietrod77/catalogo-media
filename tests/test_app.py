@@ -276,3 +276,21 @@ def test_riferimento_404_se_file_non_esiste(app, client):
 def test_riferimento_400_se_path_mancante(client):
     risposta = client.get("/riferimento")
     assert risposta.status_code == 400
+
+
+def test_index_usa_colore_sfondo_di_default(client):
+    risposta = client.get("/")
+    assert b"#ffffff" in risposta.data
+
+
+def test_index_usa_colore_sfondo_personalizzato(tmp_path):
+    app_personalizzata = crea_app(
+        percorso_db=tmp_path / "volti_test.db",
+        cartella_sessioni=tmp_path / "sessioni",
+        colore_sfondo="#ffe4e1",
+    )
+    client_personalizzato = app_personalizzata.test_client()
+
+    risposta = client_personalizzato.get("/")
+
+    assert b"#ffe4e1" in risposta.data

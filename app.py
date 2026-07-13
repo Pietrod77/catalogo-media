@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+import sys
 import tempfile
 import uuid
 import webbrowser
@@ -17,6 +18,7 @@ from config import (
     CARTELLE_ARCHIVIO_EXTRA,
     PERCORSO_DB_DEFAULT,
     percorso_consentito,
+    risolvi_profilo,
 )
 from core.matching import calcola_candidati, classifica_match
 from core.volti import rileva_volti
@@ -31,6 +33,7 @@ from db.database import (
 def crea_app(
     percorso_db: Path = PERCORSO_DB_DEFAULT,
     cartella_sessioni: Path = CARTELLA_SESSIONI_DEFAULT,
+    colore_sfondo: str = "#ffffff",
 ) -> Flask:
     """Crea e configura l'app Flask. percorso_db e cartella_sessioni sono
     parametrizzabili per permettere ai test di usare un DB e una cartella
@@ -42,6 +45,7 @@ def crea_app(
         app.config["CARTELLA_SESSIONI"],
         *CARTELLE_ARCHIVIO_EXTRA,
     ]
+    app.config["COLORE_SFONDO"] = colore_sfondo
     init_db(app.config["PERCORSO_DB"])
 
     @app.get("/")
@@ -51,7 +55,9 @@ def crea_app(
         conn.close()
         nomi_esistenti = [riga[0] for riga in righe]
         return render_template(
-            "index.html", nomi_esistenti_json=json.dumps(nomi_esistenti)
+            "index.html",
+            nomi_esistenti_json=json.dumps(nomi_esistenti),
+            colore_sfondo=app.config["COLORE_SFONDO"],
         )
 
     @app.post("/analizza")
@@ -157,7 +163,21 @@ def crea_app(
 
 
 if __name__ == "__main__":
-    app = crea_app()
+    if len(sys.argv) != 2:
+        print("Uso: python app.py modelle|personaggi")
+        sys.exit(1)
+
+    try:
+        profilo = risolvi_profilo(sys.argv[1])
+    except ValueError as errore:
+        print(errore)
+        sys.exit(1)
+
+    app = crea_app(
+        percorso_db=profilo["db"],
+        cartella_sessioni=profilo["sessioni"],
+        colore_sfondo=profilo["colore"],
+    )
     if os.environ.get("VOLTI_NO_BROWSER") != "1":
-        webbrowser.open("http://127.0.0.1:5000/")
-    app.run(port=5000)
+        webbrowser.open(f"http://127.0.0.1:{profilo['porta']}/")
+    app.run(port=profilo["porta"])
