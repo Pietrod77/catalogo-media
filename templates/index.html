@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>Volti - Revisione</title>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: 40px auto; }
+        #zona-drop {
+            border: 2px dashed #888;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+        }
+        #zona-drop.drag-over { border-color: #333; background: #f0f0f0; }
+        .crop-volto { max-width: 150px; margin: 8px; border-radius: 4px; }
+        .miniatura-riferimento { max-width: 80px; vertical-align: middle; margin-right: 8px; }
+        .candidato { cursor: pointer; padding: 8px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 8px; }
+        .errore { color: #c00; }
+        .successo { color: #080; }
+    </style>
+</head>
+<body>
+    <h1>Riconoscimento volti</h1>
+    <div id="zona-drop">Trascina qui uno screenshot del volto da identificare, o clicca per selezionarlo</div>
+    <div id="risultato"></div>
+    <script>
+        const NOMI_ESISTENTI = {{ nomi_esistenti_json | safe }};
+    </script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
