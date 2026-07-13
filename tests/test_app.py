@@ -1,3 +1,7 @@
+import base64
+import uuid
+from pathlib import Path
+
 import numpy as np
 import pytest
 from PIL import Image
@@ -122,4 +126,77 @@ def test_analizza_immagine_non_leggibile(client, tmp_path, monkeypatch):
 
 def test_analizza_nessun_file_inviato(client):
     risposta = client.post("/analizza", data={})
+    assert risposta.status_code == 400
+
+
+def test_conferma_nome_nuovo_crea_persona_ed_embedding(app, client):
+    vettore = _vettore_normalizzato(seed=7).tolist()
+    screenshot_b64 = base64.b64encode(b"contenuto finto jpg").decode("ascii")
+
+    risposta = client.post(
+        "/conferma",
+        json={
+            "nome": "Nuova Persona",
+            "vettore": vettore,
+            "screenshot_base64": screenshot_b64,
+        },
+    )
+
+    assert risposta.status_code == 200
+    assert risposta.get_json()["ok"] is True
+
+    conn = connetti(app.config["PERCORSO_DB"])
+    riga_persona = conn.execute(
+        "SELECT id FROM persone WHERE nome = ?", ("Nuova Persona",)
+    ).fetchone()
+    assert riga_persona is not None
+    riga_embedding = conn.execute(
+        "SELECT foto_origine, fonte FROM embedding WHERE person_id = ?",
+        (riga_persona[0],),
+    ).fetchone()
+    conn.close()
+
+    assert riga_embedding[1] == "conferma_editing"
+    assert Path(riga_embedding[0]).exists()
+
+
+def test_conferma_nome_esistente_non_duplica_persona(app, client):
+    conn = connetti(app.config["PERCORSO_DB"])
+    id_esistente = trova_o_crea_persona(conn, "Mario Rossi")
+    conn.close()
+
+    vettore = _vettore_normalizzato(seed=8).tolist()
+    screenshot_b64 = base64.b64encode(b"contenuto finto jpg").decode("ascii")
+
+    client.post(
+        "/conferma",
+        json={
+            "nome": "Mario Rossi",
+            "vettore": vettore,
+            "screenshot_base64": screenshot_b64,
+        },
+    )
+
+    conn = connetti(app.config["PERCORSO_DB"])
+    persone = conn.execute(
+        "SELECT id FROM persone WHERE nome = ?", ("Mario Rossi",)
+    ).fetchall()
+    embedding_rows = conn.execute(
+        "SELECT id FROM embedding WHERE person_id = ?", (id_esistente,)
+    ).fetchall()
+    conn.close()
+
+    assert len(persone) == 1
+    assert len(embedding_rows) == 1
+
+
+def test_conferma_nome_vuoto_ritorna_400(client):
+    vettore = _vettore_normalizzato(seed=9).tolist()
+    screenshot_b64 = base64.b64encode(b"x").decode("ascii")
+
+    risposta = client.post(
+        "/conferma",
+        json={"nome": "   ", "vettore": vettore, "screenshot_base64": screenshot_b64},
+    )
+
     assert risposta.status_code == 400

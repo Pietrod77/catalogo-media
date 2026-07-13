@@ -4,16 +4,23 @@ import base64
 import json
 import os
 import tempfile
+import uuid
 import webbrowser
 from pathlib import Path
 
 import cv2
+import numpy as np
 from flask import Flask, jsonify, render_template, request
 
 from config import CARTELLA_SESSIONI_DEFAULT, CARTELLE_ARCHIVIO_EXTRA, PERCORSO_DB_DEFAULT
 from core.matching import calcola_candidati, classifica_match
 from core.volti import rileva_volti
-from db.database import connetti, init_db
+from db.database import (
+    connetti,
+    init_db,
+    salva_embedding,
+    trova_o_crea_persona,
+)
 
 
 def crea_app(
@@ -94,6 +101,34 @@ def crea_app(
             return jsonify(volti=risultato_volti)
         finally:
             percorso_temp.unlink(missing_ok=True)
+
+    @app.post("/conferma")
+    def conferma():
+        dati = request.get_json(silent=True) or {}
+        nome = (dati.get("nome") or "").strip()
+        vettore_lista = dati.get("vettore")
+        screenshot_base64 = dati.get("screenshot_base64")
+
+        if not nome:
+            return jsonify(errore="nome mancante"), 400
+        if not vettore_lista or not screenshot_base64:
+            return jsonify(errore="dati mancanti"), 400
+
+        vettore = np.array(vettore_lista, dtype=np.float32)
+
+        cartella_conferme = app.config["CARTELLA_SESSIONI"] / "conferme"
+        cartella_conferme.mkdir(parents=True, exist_ok=True)
+        percorso_screenshot = cartella_conferme / f"{uuid.uuid4().hex}.jpg"
+        percorso_screenshot.write_bytes(base64.b64decode(screenshot_base64))
+
+        conn = connetti(app.config["PERCORSO_DB"])
+        person_id = trova_o_crea_persona(conn, nome)
+        salva_embedding(
+            conn, person_id, vettore, str(percorso_screenshot), "conferma_editing"
+        )
+        conn.close()
+
+        return jsonify(ok=True)
 
     return app
 
