@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 
-from config import PROFILI, percorso_consentito, risolvi_profilo
+from config import PROFILI, CARTELLA_SESSIONI_DEFAULT, percorso_consentito, risolvi_profilo
 
 
 def test_percorso_consentito_dentro_cartella_permessa(tmp_path):
@@ -47,6 +47,7 @@ def test_profili_personaggi_punta_al_db_esistente():
 
     profilo = PROFILI["personaggi"]
     assert profilo["db"] == PERCORSO_DB_DEFAULT
+    assert profilo["sessioni"] == CARTELLA_SESSIONI_DEFAULT
     assert profilo["porta"] == 5002
     assert profilo["colore"] == "#b0e0e6"
 

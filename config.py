@@ -33,7 +33,7 @@ PROFILI: dict[str, dict] = {
     },
     "personaggi": {
         "db": PERCORSO_DB_DEFAULT,
-        "sessioni": RADICE_PROGETTO / "sessioni" / "personaggi",
+        "sessioni": CARTELLA_SESSIONI_DEFAULT,
         "porta": 5002,
         "colore": "#b0e0e6",
     },
