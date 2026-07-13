@@ -202,6 +202,44 @@ def test_conferma_nome_vuoto_ritorna_400(client):
     assert risposta.status_code == 400
 
 
+def test_conferma_vettore_lunghezza_sbagliata_ritorna_400(app, client):
+    screenshot_b64 = base64.b64encode(b"x").decode("ascii")
+
+    risposta = client.post(
+        "/conferma",
+        json={
+            "nome": "Persona Vettore Corto",
+            "vettore": [0.1, 0.2, 0.3],
+            "screenshot_base64": screenshot_b64,
+        },
+    )
+
+    assert risposta.status_code == 400
+    conn = connetti(app.config["PERCORSO_DB"])
+    riga = conn.execute(
+        "SELECT id FROM persone WHERE nome = ?", ("Persona Vettore Corto",)
+    ).fetchone()
+    conn.close()
+    assert riga is None
+
+
+def test_conferma_vettore_con_valori_non_finiti_ritorna_400(client):
+    vettore = _vettore_normalizzato(seed=10).tolist()
+    vettore[0] = float("nan")
+    screenshot_b64 = base64.b64encode(b"x").decode("ascii")
+
+    risposta = client.post(
+        "/conferma",
+        json={
+            "nome": "Persona Vettore Nan",
+            "vettore": vettore,
+            "screenshot_base64": screenshot_b64,
+        },
+    )
+
+    assert risposta.status_code == 400
+
+
 def test_riferimento_serve_file_in_cartella_consentita(app, client):
     cartella_conferme = app.config["CARTELLA_SESSIONI"] / "conferme"
     cartella_conferme.mkdir(parents=True)

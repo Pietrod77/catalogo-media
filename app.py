@@ -120,6 +120,8 @@ def crea_app(
             return jsonify(errore="dati mancanti"), 400
 
         vettore = np.array(vettore_lista, dtype=np.float32)
+        if vettore.shape != (512,) or not np.all(np.isfinite(vettore)):
+            return jsonify(errore="vettore non valido"), 400
 
         cartella_conferme = app.config["CARTELLA_SESSIONI"] / "conferme"
         cartella_conferme.mkdir(parents=True, exist_ok=True)

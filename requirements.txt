@@ -1,7 +1,7 @@
 insightface==1.0.1
 onnxruntime==1.27.0
-opencv-python
+opencv-python==5.0.0.93
 numpy==2.5.1
-flask
-pillow
-pytest
+flask==3.1.3
+pillow==12.3.0
+pytest==9.1.1

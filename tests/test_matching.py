@@ -78,6 +78,27 @@ def test_calcola_candidati_ritorna_lista_vuota_se_db_vuoto(tmp_path):
     assert candidati == []
 
 
+def test_calcola_candidati_ignora_blob_di_lunghezza_sbagliata(tmp_path):
+    """Un embedding malformato in DB (es. inserito a mano o da un bug futuro)
+    non deve rompere il matching per tutti: va saltato, non sollevare eccezione."""
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+
+    id_persona = trova_o_crea_persona(conn, "Persona Corrotta")
+    conn.execute(
+        "INSERT INTO embedding (person_id, vettore, foto_origine, fonte) "
+        "VALUES (?, ?, ?, ?)",
+        (id_persona, b"\x00" * 12, "corrotto.jpg", "manuale"),
+    )
+    conn.commit()
+
+    candidati = calcola_candidati(_vettore_normalizzato(seed=1), conn)
+
+    conn.close()
+    assert candidati == []
+
+
 def test_classifica_match_certo_sopra_soglia_alta():
     candidati = [Candidato(nome="Mario Rossi", punteggio=0.9, foto_riferimento="x.jpg")]
     assert classifica_match(candidati) == "certo"

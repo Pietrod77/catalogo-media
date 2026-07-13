@@ -32,6 +32,8 @@ def calcola_candidati(
 
     per_persona: dict[str, list[tuple[float, str]]] = {}
     for nome, blob, foto in righe:
+        if len(blob) != 512 * 4:
+            continue  # embedding corrotto/malformato in DB, salta invece di crashare
         vettore_db = np.frombuffer(blob, dtype=np.float32)
         similarita = float(np.dot(vettore, vettore_db))
         per_persona.setdefault(nome, []).append((similarita, foto))
