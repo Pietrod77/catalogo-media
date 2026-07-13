@@ -10,9 +10,14 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file
 
-from config import CARTELLA_SESSIONI_DEFAULT, CARTELLE_ARCHIVIO_EXTRA, PERCORSO_DB_DEFAULT
+from config import (
+    CARTELLA_SESSIONI_DEFAULT,
+    CARTELLE_ARCHIVIO_EXTRA,
+    PERCORSO_DB_DEFAULT,
+    percorso_consentito,
+)
 from core.matching import calcola_candidati, classifica_match
 from core.volti import rileva_volti
 from db.database import (
@@ -129,6 +134,22 @@ def crea_app(
         conn.close()
 
         return jsonify(ok=True)
+
+    @app.get("/riferimento")
+    def riferimento():
+        percorso_str = request.args.get("path", "")
+        if not percorso_str:
+            return jsonify(errore="path mancante"), 400
+
+        percorso = Path(percorso_str)
+        if not percorso_consentito(
+            percorso, app.config["CARTELLE_CONSENTITE_RIFERIMENTI"]
+        ):
+            return jsonify(errore="path non consentito"), 403
+        if not percorso.is_file():
+            return jsonify(errore="file non trovato"), 404
+
+        return send_file(percorso)
 
     return app
 

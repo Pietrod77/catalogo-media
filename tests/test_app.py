@@ -200,3 +200,41 @@ def test_conferma_nome_vuoto_ritorna_400(client):
     )
 
     assert risposta.status_code == 400
+
+
+def test_riferimento_serve_file_in_cartella_consentita(app, client):
+    cartella_conferme = app.config["CARTELLA_SESSIONI"] / "conferme"
+    cartella_conferme.mkdir(parents=True)
+    percorso_file = cartella_conferme / "riferimento.jpg"
+    _crea_immagine_prova(percorso_file)
+
+    risposta = client.get(f"/riferimento?path={percorso_file}")
+
+    assert risposta.status_code == 200
+    assert len(risposta.data) > 0
+
+
+def test_riferimento_403_se_fuori_cartelle_consentite(client, tmp_path):
+    cartella_esterna = tmp_path / "fuori"
+    cartella_esterna.mkdir()
+    percorso_file = cartella_esterna / "riferimento.jpg"
+    _crea_immagine_prova(percorso_file)
+
+    risposta = client.get(f"/riferimento?path={percorso_file}")
+
+    assert risposta.status_code == 403
+
+
+def test_riferimento_404_se_file_non_esiste(app, client):
+    cartella_conferme = app.config["CARTELLA_SESSIONI"] / "conferme"
+    cartella_conferme.mkdir(parents=True)
+    percorso_inesistente = cartella_conferme / "non_esiste.jpg"
+
+    risposta = client.get(f"/riferimento?path={percorso_inesistente}")
+
+    assert risposta.status_code == 404
+
+
+def test_riferimento_400_se_path_mancante(client):
+    risposta = client.get("/riferimento")
+    assert risposta.status_code == 400
