@@ -43,6 +43,37 @@ def test_index_include_nomi_esistenti(app, client):
     assert b"Mario Rossi" in risposta.data
 
 
+def test_index_senza_profilo_mostra_titolo_generico(client):
+    risposta = client.get("/")
+    assert b"Riconoscimento volti</h1>" in risposta.data
+
+
+def test_index_con_profilo_modelle_mostra_il_nome(tmp_path):
+    app_modelle = crea_app(
+        percorso_db=tmp_path / "volti_test.db",
+        cartella_sessioni=tmp_path / "sessioni",
+        nome_profilo="modelle",
+    )
+    client_modelle = app_modelle.test_client()
+
+    risposta = client_modelle.get("/")
+
+    assert b"Modelle" in risposta.data
+
+
+def test_index_con_profilo_personaggi_mostra_il_nome(tmp_path):
+    app_personaggi = crea_app(
+        percorso_db=tmp_path / "volti_test.db",
+        cartella_sessioni=tmp_path / "sessioni",
+        nome_profilo="personaggi",
+    )
+    client_personaggi = app_personaggi.test_client()
+
+    risposta = client_personaggi.get("/")
+
+    assert b"Personaggi" in risposta.data
+
+
 def _vettore_normalizzato(seed: int) -> np.ndarray:
     """Genera un vettore casuale riproducibile e normalizzato L2 (come un vero embedding)."""
     rng = np.random.default_rng(seed)

@@ -34,6 +34,7 @@ def crea_app(
     percorso_db: Path = PERCORSO_DB_DEFAULT,
     cartella_sessioni: Path = CARTELLA_SESSIONI_DEFAULT,
     colore_sfondo: str = "#ffffff",
+    nome_profilo: str = "",
 ) -> Flask:
     """Crea e configura l'app Flask. percorso_db e cartella_sessioni sono
     parametrizzabili per permettere ai test di usare un DB e una cartella
@@ -46,6 +47,7 @@ def crea_app(
         *CARTELLE_ARCHIVIO_EXTRA,
     ]
     app.config["COLORE_SFONDO"] = colore_sfondo
+    app.config["NOME_PROFILO"] = nome_profilo
     init_db(app.config["PERCORSO_DB"])
 
     @app.get("/")
@@ -58,6 +60,7 @@ def crea_app(
             "index.html",
             nomi_esistenti_json=json.dumps(nomi_esistenti),
             colore_sfondo=app.config["COLORE_SFONDO"],
+            nome_profilo=app.config["NOME_PROFILO"],
         )
 
     @app.post("/analizza")
@@ -177,6 +180,7 @@ if __name__ == "__main__":
         percorso_db=profilo["db"],
         cartella_sessioni=profilo["sessioni"],
         colore_sfondo=profilo["colore"],
+        nome_profilo=sys.argv[1],
     )
     if os.environ.get("VOLTI_NO_BROWSER") != "1":
         webbrowser.open(f"http://127.0.0.1:{profilo['porta']}/")

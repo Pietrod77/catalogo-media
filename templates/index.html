@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
     <meta charset="UTF-8">
-    <title>Volti - Revisione</title>
+    <title>Volti - {{ nome_profilo|capitalize if nome_profilo else "Revisione" }}</title>
     <style>
         body { font-family: sans-serif; max-width: 600px; margin: 40px auto; }
         #zona-drop {
@@ -21,7 +21,7 @@
     </style>
 </head>
 <body style="background-color: {{ colore_sfondo }};">
-    <h1>Riconoscimento volti</h1>
+    <h1>Riconoscimento volti{% if nome_profilo %} — {{ nome_profilo|capitalize }}{% endif %}</h1>
     <div id="zona-drop">Trascina qui uno screenshot del volto da identificare, o clicca per selezionarlo</div>
     <div id="risultato"></div>
     <script>
