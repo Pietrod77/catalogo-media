@@ -193,6 +193,7 @@ function confermaNome(volto, nome) {
             nome: nome,
             vettore: volto.vettore,
             screenshot_base64: screenshotBase64,
+            score: volto.score,
         }),
     })
         .then((risposta) => risposta.json())

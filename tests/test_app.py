@@ -185,6 +185,7 @@ def test_conferma_nome_nuovo_crea_persona_ed_embedding(app, client):
             "nome": "Nuova Persona",
             "vettore": vettore,
             "screenshot_base64": screenshot_b64,
+            "score": 0.9,
         },
     )
 
@@ -220,6 +221,7 @@ def test_conferma_nome_esistente_non_duplica_persona(app, client):
             "nome": "Mario Rossi",
             "vettore": vettore,
             "screenshot_base64": screenshot_b64,
+            "score": 0.9,
         },
     )
 
@@ -257,6 +259,7 @@ def test_conferma_vettore_lunghezza_sbagliata_ritorna_400(app, client):
             "nome": "Persona Vettore Corto",
             "vettore": [0.1, 0.2, 0.3],
             "screenshot_base64": screenshot_b64,
+            "score": 0.9,
         },
     )
 
@@ -280,10 +283,73 @@ def test_conferma_vettore_con_valori_non_finiti_ritorna_400(client):
             "nome": "Persona Vettore Nan",
             "vettore": vettore,
             "screenshot_base64": screenshot_b64,
+            "score": 0.9,
         },
     )
 
     assert risposta.status_code == 400
+
+
+def test_conferma_score_assente_ritorna_400(client):
+    vettore = _vettore_normalizzato(seed=30).tolist()
+    screenshot_b64 = base64.b64encode(b"x").decode("ascii")
+
+    risposta = client.post(
+        "/conferma",
+        json={
+            "nome": "Persona Senza Score",
+            "vettore": vettore,
+            "screenshot_base64": screenshot_b64,
+        },
+    )
+
+    assert risposta.status_code == 400
+
+
+def test_conferma_score_basso_ritorna_400(app, client):
+    vettore = _vettore_normalizzato(seed=31).tolist()
+    screenshot_b64 = base64.b64encode(b"x").decode("ascii")
+
+    risposta = client.post(
+        "/conferma",
+        json={
+            "nome": "Persona Score Basso",
+            "vettore": vettore,
+            "screenshot_base64": screenshot_b64,
+            "score": 0.3,
+        },
+    )
+
+    assert risposta.status_code == 400
+    conn = connetti(app.config["PERCORSO_DB"])
+    riga = conn.execute(
+        "SELECT id FROM persone WHERE nome = ?", ("Persona Score Basso",)
+    ).fetchone()
+    conn.close()
+    assert riga is None
+
+
+def test_conferma_score_sufficiente_salva_normalmente(app, client):
+    vettore = _vettore_normalizzato(seed=32).tolist()
+    screenshot_b64 = base64.b64encode(b"x").decode("ascii")
+
+    risposta = client.post(
+        "/conferma",
+        json={
+            "nome": "Persona Score Alto",
+            "vettore": vettore,
+            "screenshot_base64": screenshot_b64,
+            "score": 0.9,
+        },
+    )
+
+    assert risposta.status_code == 200
+    conn = connetti(app.config["PERCORSO_DB"])
+    riga = conn.execute(
+        "SELECT id FROM persone WHERE nome = ?", ("Persona Score Alto",)
+    ).fetchone()
+    conn.close()
+    assert riga is not None
 
 
 def test_riferimento_serve_file_in_cartella_consentita(app, client):

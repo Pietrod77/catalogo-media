@@ -21,7 +21,7 @@ from config import (
     risolvi_profilo,
 )
 from core.matching import calcola_candidati, classifica_match
-from core.volti import rileva_volti
+from core.volti import SOGLIA_QUALITA_MINIMA, rileva_volti
 from db.database import (
     connetti,
     init_db,
@@ -123,15 +123,27 @@ def crea_app(
         nome = (dati.get("nome") or "").strip()
         vettore_lista = dati.get("vettore")
         screenshot_base64 = dati.get("screenshot_base64")
+        score = dati.get("score")
 
         if not nome:
             return jsonify(errore="nome mancante"), 400
-        if not vettore_lista or not screenshot_base64:
+        if not vettore_lista or not screenshot_base64 or score is None:
             return jsonify(errore="dati mancanti"), 400
 
         vettore = np.array(vettore_lista, dtype=np.float32)
         if vettore.shape != (512,) or not np.all(np.isfinite(vettore)):
             return jsonify(errore="vettore non valido"), 400
+
+        if score < SOGLIA_QUALITA_MINIMA:
+            return (
+                jsonify(
+                    errore=(
+                        f"qualità troppo bassa (score {score:.2f}), "
+                        "usa uno screenshot più nitido o ravvicinato"
+                    )
+                ),
+                400,
+            )
 
         cartella_conferme = app.config["CARTELLA_SESSIONI"] / "conferme"
         cartella_conferme.mkdir(parents=True, exist_ok=True)
