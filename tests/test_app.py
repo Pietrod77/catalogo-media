@@ -141,6 +141,21 @@ def test_analizza_piu_volti(client, tmp_path, monkeypatch):
     assert len(risposta.get_json()["volti"]) == 2
 
 
+def test_analizza_include_score_nel_risultato(client, tmp_path, monkeypatch):
+    vettore = _vettore_normalizzato(seed=20)
+    volto_finto = VoltoRilevato(vettore=vettore, bbox=(10, 10, 50, 50), score=0.83)
+    monkeypatch.setattr("app.rileva_volti", lambda percorso: [volto_finto])
+
+    percorso_immagine = tmp_path / "screenshot.jpg"
+    _crea_immagine_prova(percorso_immagine)
+
+    with open(percorso_immagine, "rb") as f:
+        risposta = client.post("/analizza", data={"immagine": (f, "screenshot.jpg")})
+
+    dati = risposta.get_json()
+    assert dati["volti"][0]["score"] == pytest.approx(0.83)
+
+
 def test_analizza_immagine_non_leggibile(client, tmp_path, monkeypatch):
     def _solleva_valueerror(percorso):
         raise ValueError("immagine non leggibile")

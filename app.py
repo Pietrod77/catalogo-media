@@ -100,6 +100,7 @@ def crea_app(
                     {
                         "vettore": volto.vettore.tolist(),
                         "crop_base64": crop_base64,
+                        "score": volto.score,
                         "stato": stato,
                         "candidati": [
                             {

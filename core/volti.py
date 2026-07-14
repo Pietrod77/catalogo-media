@@ -17,6 +17,9 @@ class VoltoRilevato:
     score: float
 
 
+SOGLIA_QUALITA_MINIMA = 0.5
+
+
 def carica_modello() -> FaceAnalysis:
     """Carica il modello InsightFace (buffalo_l) una sola volta per processo."""
     global _modello
