@@ -82,6 +82,16 @@ function mostraVolti(volti) {
     risultatoDiv.appendChild(contenitore);
 }
 
+function formattaNome(nome) {
+    // Solo per la visualizzazione (copia-incolla): il nome salvato nel
+    // database resta quello originale, qualunque maiuscola/minuscola abbia.
+    return nome
+        .toLowerCase()
+        .split(" ")
+        .map((parola) => (parola ? parola.charAt(0).toUpperCase() + parola.slice(1) : parola))
+        .join(" ");
+}
+
 function mostraRisultatoVolto(volto) {
     risultatoDiv.innerHTML = "";
 
@@ -103,7 +113,7 @@ function mostraCerto(volto) {
     const candidato = volto.candidati[0];
     const blocco = document.createElement("div");
     blocco.innerHTML = `
-        <p>${candidato.nome} (${candidato.punteggio.toFixed(3)})</p>
+        <p>${formattaNome(candidato.nome)} (${candidato.punteggio.toFixed(3)})</p>
         <button id="btn-conferma">Conferma</button>
         <a href="#" id="link-correggi">non e' lui, correggi</a>
     `;
@@ -131,7 +141,7 @@ function mostraAmbiguo(volto) {
         voce.className = "candidato";
         voce.innerHTML = `
             <img src="/riferimento?path=${encodeURIComponent(candidato.foto_riferimento)}" class="miniatura-riferimento">
-            <span>${candidato.nome} (${candidato.punteggio.toFixed(3)})</span>
+            <span>${formattaNome(candidato.nome)} (${candidato.punteggio.toFixed(3)})</span>
         `;
         voce.addEventListener("click", () => {
             // Guard against double-click: disable all candidati
@@ -202,7 +212,7 @@ function confermaNome(volto, nome) {
                 if (!NOMI_ESISTENTI.includes(nome)) {
                     NOMI_ESISTENTI.push(nome);
                 }
-                risultatoDiv.innerHTML = `<p class="successo">Salvato: ${nome}</p>`;
+                risultatoDiv.innerHTML = `<p class="successo">Salvato: ${formattaNome(nome)}</p>`;
                 setTimeout(() => {
                     risultatoDiv.innerHTML = "";
                 }, 1500);
