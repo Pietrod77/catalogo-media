@@ -61,6 +61,7 @@ def crea_app(
             nomi_esistenti_json=json.dumps(nomi_esistenti),
             colore_sfondo=app.config["COLORE_SFONDO"],
             nome_profilo=app.config["NOME_PROFILO"],
+            numero_persone=len(nomi_esistenti),
         )
 
     @app.post("/analizza")

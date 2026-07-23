@@ -22,6 +22,7 @@
 </head>
 <body style="background-color: {{ colore_sfondo }};">
     <h1>Riconoscimento volti{% if nome_profilo %} — {{ nome_profilo|capitalize }}{% endif %}</h1>
+    <p style="color: #666;">Siamo a {{ numero_persone }} volti in database</p>
     <div id="zona-drop">Trascina qui uno screenshot del volto da identificare, o clicca per selezionarlo</div>
     <div id="risultato"></div>
     <script>
