@@ -69,6 +69,8 @@ def popola_da_cartella(cartella: Path, percorso_db: Path) -> dict[str, int]:
             *cartella.rglob("*.JPG"),
             *cartella.rglob("*.jpeg"),
             *cartella.rglob("*.JPEG"),
+            *cartella.rglob("*.png"),
+            *cartella.rglob("*.PNG"),
         ]
     )
 
