@@ -406,3 +406,81 @@ def test_index_usa_colore_sfondo_personalizzato(tmp_path):
     risposta = client_personalizzato.get("/")
 
     assert b"#ffe4e1" in risposta.data
+
+
+def test_index_mostra_conferme_in_sospeso(app, client):
+    conn = connetti(app.config["PERCORSO_DB"])
+    id_mario = trova_o_crea_persona(conn, "Mario Rossi")
+    vettore = _vettore_normalizzato(seed=41)
+    salva_embedding(conn, id_mario, vettore, "foto.jpg", "conferma_editing", sincronizzato=False)
+    conn.close()
+
+    risposta = client.get("/")
+
+    assert b"1 conferme in attesa di sync" in risposta.data
+
+
+def test_index_non_mostra_indicatore_se_tutto_sincronizzato(client):
+    risposta = client.get("/")
+    assert b"conferme in attesa di sync" not in risposta.data
+
+
+def test_conferma_con_nas_url_configurato_marca_non_sincronizzato(tmp_path):
+    app_locale = crea_app(
+        percorso_db=tmp_path / "volti_test.db",
+        cartella_sessioni=tmp_path / "sessioni",
+        nas_url="http://nas-di-prova.invalid:5002",
+    )
+    client_locale = app_locale.test_client()
+    vettore = _vettore_normalizzato(seed=50).tolist()
+    screenshot_b64 = base64.b64encode(b"x").decode("ascii")
+
+    client_locale.post(
+        "/conferma",
+        json={
+            "nome": "Persona Offline",
+            "vettore": vettore,
+            "screenshot_base64": screenshot_b64,
+            "score": 0.9,
+        },
+    )
+
+    conn = connetti(app_locale.config["PERCORSO_DB"])
+    riga = conn.execute(
+        "SELECT sincronizzato FROM embedding e JOIN persone p ON p.id = e.person_id "
+        "WHERE p.nome = ?",
+        ("Persona Offline",),
+    ).fetchone()
+    conn.close()
+    assert riga[0] == 0
+
+
+def test_sync_esporta_ritorna_persone_ed_embedding_nuovi(app, client):
+    conn = connetti(app.config["PERCORSO_DB"])
+    id_mario = trova_o_crea_persona(conn, "Mario Rossi")
+    vettore = _vettore_normalizzato(seed=60)
+    cartella_conferme = app.config["CARTELLA_SESSIONI"] / "conferme"
+    cartella_conferme.mkdir(parents=True, exist_ok=True)
+    file_foto = cartella_conferme / "test.jpg"
+    file_foto.write_bytes(b"contenuto finto jpg")
+    salva_embedding(conn, id_mario, vettore, str(file_foto), "conferma_editing")
+    conn.close()
+
+    risposta = client.get("/sync/esporta")
+    dati = risposta.get_json()
+
+    assert risposta.status_code == 200
+    assert any(p["nome"] == "Mario Rossi" for p in dati["persone"])
+    assert len(dati["embedding"]) == 1
+    assert dati["embedding"][0]["nome"] == "Mario Rossi"
+    assert dati["embedding"][0]["screenshot_base64"] is not None
+
+
+def test_sync_esporta_rispetta_dopo_persona(app, client):
+    conn = connetti(app.config["PERCORSO_DB"])
+    id_mario = trova_o_crea_persona(conn, "Mario Rossi")
+    conn.close()
+
+    risposta = client.get(f"/sync/esporta?dopo_persona={id_mario}")
+
+    assert risposta.get_json()["persone"] == []

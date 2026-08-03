@@ -16,14 +16,19 @@ from flask import Flask, jsonify, render_template, request, send_file
 from config import (
     CARTELLA_SESSIONI_DEFAULT,
     CARTELLE_ARCHIVIO_EXTRA,
+    HOST,
+    NAS_URL,
     PERCORSO_DB_DEFAULT,
     percorso_consentito,
     risolvi_profilo,
 )
 from core.matching import calcola_candidati, classifica_match
+from core.sync import avvia_worker_sync
 from core.volti import SOGLIA_QUALITA_MINIMA, rileva_volti
 from db.database import (
     connetti,
+    esporta_embedding_dopo,
+    esporta_persone_dopo,
     init_db,
     salva_embedding,
     trova_o_crea_persona,
@@ -35,10 +40,13 @@ def crea_app(
     cartella_sessioni: Path = CARTELLA_SESSIONI_DEFAULT,
     colore_sfondo: str = "#ffffff",
     nome_profilo: str = "",
+    nas_url: str | None = None,
 ) -> Flask:
     """Crea e configura l'app Flask. percorso_db e cartella_sessioni sono
     parametrizzabili per permettere ai test di usare un DB e una cartella
-    temporanei, isolati dai dati reali."""
+    temporanei, isolati dai dati reali. nas_url, se impostato, indica che
+    questa istanza e' un fallback locale: le conferme fatte qui partono
+    come non sincronizzate, in attesa che il worker le invii al NAS."""
     app = Flask(__name__)
     app.config["PERCORSO_DB"] = Path(percorso_db)
     app.config["CARTELLA_SESSIONI"] = Path(cartella_sessioni)
@@ -48,12 +56,16 @@ def crea_app(
     ]
     app.config["COLORE_SFONDO"] = colore_sfondo
     app.config["NOME_PROFILO"] = nome_profilo
+    app.config["NAS_URL"] = nas_url
     init_db(app.config["PERCORSO_DB"])
 
     @app.get("/")
     def index():
         conn = connetti(app.config["PERCORSO_DB"])
         righe = conn.execute("SELECT nome FROM persone ORDER BY nome").fetchall()
+        conteggio_in_sospeso = conn.execute(
+            "SELECT COUNT(*) FROM embedding WHERE sincronizzato = 0"
+        ).fetchone()[0]
         conn.close()
         nomi_esistenti = [riga[0] for riga in righe]
         return render_template(
@@ -62,6 +74,7 @@ def crea_app(
             colore_sfondo=app.config["COLORE_SFONDO"],
             nome_profilo=app.config["NOME_PROFILO"],
             numero_persone=len(nomi_esistenti),
+            conteggio_in_sospeso=conteggio_in_sospeso,
         )
 
     @app.post("/analizza")
@@ -154,7 +167,12 @@ def crea_app(
         conn = connetti(app.config["PERCORSO_DB"])
         person_id = trova_o_crea_persona(conn, nome)
         salva_embedding(
-            conn, person_id, vettore, str(percorso_screenshot), "conferma_editing"
+            conn,
+            person_id,
+            vettore,
+            str(percorso_screenshot),
+            "conferma_editing",
+            sincronizzato=app.config["NAS_URL"] is None,
         )
         conn.close()
 
@@ -176,6 +194,27 @@ def crea_app(
 
         return send_file(percorso)
 
+    @app.get("/sync/esporta")
+    def sync_esporta():
+        dopo_persona = int(request.args.get("dopo_persona", 0))
+        dopo_embedding = int(request.args.get("dopo_embedding", 0))
+        conn = connetti(app.config["PERCORSO_DB"])
+        persone = esporta_persone_dopo(conn, dopo_persona)
+        righe_embedding = esporta_embedding_dopo(conn, dopo_embedding)
+        conn.close()
+
+        embedding = []
+        for riga in righe_embedding:
+            percorso_foto = Path(riga["foto_origine"])
+            screenshot_base64 = (
+                base64.b64encode(percorso_foto.read_bytes()).decode("ascii")
+                if percorso_foto.is_file()
+                else None
+            )
+            embedding.append({**riga, "screenshot_base64": screenshot_base64})
+
+        return jsonify(persone=persone, embedding=embedding)
+
     return app
 
 
@@ -195,7 +234,10 @@ if __name__ == "__main__":
         cartella_sessioni=profilo["sessioni"],
         colore_sfondo=profilo["colore"],
         nome_profilo=sys.argv[1],
+        nas_url=NAS_URL,
     )
+    if NAS_URL:
+        avvia_worker_sync(profilo["db"], profilo["sessioni"], NAS_URL)
     if os.environ.get("VOLTI_NO_BROWSER") != "1":
         webbrowser.open(f"http://127.0.0.1:{profilo['porta']}/")
-    app.run(port=profilo["porta"])
+    app.run(host=HOST, port=profilo["porta"])
