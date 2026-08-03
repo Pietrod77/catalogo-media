@@ -9,6 +9,8 @@ PERCORSO_DB_DEFAULT = RADICE_PROGETTO / "db" / "volti.db"
 CARTELLA_SESSIONI_DEFAULT = RADICE_PROGETTO / "sessioni"
 
 _archivio_storico = os.environ.get("VOLTI_ARCHIVIO_STORICO")
+NAS_URL = os.environ.get("VOLTI_NAS_URL") or None
+HOST = os.environ.get("VOLTI_HOST", "127.0.0.1")
 CARTELLE_ARCHIVIO_EXTRA: list[Path] = (
     [Path(_archivio_storico).resolve()] if _archivio_storico else []
 )

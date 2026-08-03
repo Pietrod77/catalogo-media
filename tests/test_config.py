@@ -64,3 +64,39 @@ def test_risolvi_profilo_ritorna_il_profilo_richiesto():
 def test_risolvi_profilo_nome_sconosciuto_solleva_valueerror():
     with pytest.raises(ValueError):
         risolvi_profilo("altro")
+
+
+def test_nas_url_none_se_variabile_ambiente_assente(monkeypatch):
+    monkeypatch.delenv("VOLTI_NAS_URL", raising=False)
+    import importlib
+    import config as config_module
+
+    importlib.reload(config_module)
+    assert config_module.NAS_URL is None
+
+
+def test_nas_url_legge_variabile_ambiente(monkeypatch):
+    monkeypatch.setenv("VOLTI_NAS_URL", "http://100.125.65.26:5002")
+    import importlib
+    import config as config_module
+
+    importlib.reload(config_module)
+    assert config_module.NAS_URL == "http://100.125.65.26:5002"
+
+
+def test_host_default_localhost(monkeypatch):
+    monkeypatch.delenv("VOLTI_HOST", raising=False)
+    import importlib
+    import config as config_module
+
+    importlib.reload(config_module)
+    assert config_module.HOST == "127.0.0.1"
+
+
+def test_host_legge_variabile_ambiente(monkeypatch):
+    monkeypatch.setenv("VOLTI_HOST", "0.0.0.0")
+    import importlib
+    import config as config_module
+
+    importlib.reload(config_module)
+    assert config_module.HOST == "0.0.0.0"
