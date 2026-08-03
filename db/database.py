@@ -60,6 +60,7 @@ def _migra_colonna_sincronizzato(conn: sqlite3.Connection) -> None:
 def init_db(percorso_db: str | Path) -> None:
     """Crea le tabelle persone, embedding, log_scarti, sync_stato se non esistono già,
     e migra i DB pre-esistenti aggiungendo la colonna sincronizzato se assente."""
+    Path(percorso_db).parent.mkdir(parents=True, exist_ok=True)
     conn = connetti(percorso_db)
     try:
         conn.executescript(SCHEMA)
