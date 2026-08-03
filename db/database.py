@@ -1,6 +1,7 @@
 """Inizializzazione e connessione al database SQLite dei volti."""
 
 import sqlite3
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,7 @@ CREATE TABLE IF NOT EXISTS embedding (
     foto_origine TEXT NOT NULL,
     fonte TEXT NOT NULL,
     sincronizzato INTEGER NOT NULL DEFAULT 1,
+    uid TEXT,
     creato_il TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -57,15 +59,29 @@ def _migra_colonna_sincronizzato(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _migra_colonna_uid(conn: sqlite3.Connection) -> None:
+    """Aggiunge embedding.uid ai DB creati prima di questa modifica.
+
+    Nessun vincolo UNIQUE: ALTER TABLE ADD COLUMN in SQLite non lo permette su
+    tabelle esistenti, e la coerenza tra DB nuovi e DB migrati conta piu' di una
+    garanzia a livello di DB (l'unicita' degli uuid4 e' gia' data per buona
+    altrove in questo codice, ad es. per i nomi file degli screenshot)."""
+    colonne = [riga[1] for riga in conn.execute("PRAGMA table_info(embedding)").fetchall()]
+    if "uid" not in colonne:
+        conn.execute("ALTER TABLE embedding ADD COLUMN uid TEXT")
+        conn.commit()
+
+
 def init_db(percorso_db: str | Path) -> None:
     """Crea le tabelle persone, embedding, log_scarti, sync_stato se non esistono già,
-    e migra i DB pre-esistenti aggiungendo la colonna sincronizzato se assente."""
+    e migra i DB pre-esistenti aggiungendo le colonne sincronizzato e uid se assenti."""
     Path(percorso_db).parent.mkdir(parents=True, exist_ok=True)
     conn = connetti(percorso_db)
     try:
         conn.executescript(SCHEMA)
         conn.commit()
         _migra_colonna_sincronizzato(conn)
+        _migra_colonna_uid(conn)
     finally:
         conn.close()
 
@@ -87,20 +103,29 @@ def salva_embedding(
     foto_origine: str,
     fonte: str,
     sincronizzato: bool = True,
+    uid: str | None = None,
 ) -> int:
     """Inserisce un embedding legato a una persona. Ritorna l'id della riga creata.
 
     sincronizzato=False marca la riga come non ancora inviata al NAS (usato solo
-    dalle conferme fatte in modalita' fallback locale)."""
+    dalle conferme fatte in modalita' fallback locale).
+
+    uid e' l'identita' stabile della riga, indipendente dal nome file dello
+    screenshot: va passato esplicitamente quando si replica una riga gia'
+    esistente altrove (push o pull di sync), cosi' che sia riconoscibile come
+    la stessa conferma; se assente ne viene generato uno nuovo."""
+    if uid is None:
+        uid = uuid.uuid4().hex
     cursor = conn.execute(
-        "INSERT INTO embedding (person_id, vettore, foto_origine, fonte, sincronizzato) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO embedding (person_id, vettore, foto_origine, fonte, sincronizzato, uid) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
         (
             person_id,
             vettore.astype(np.float32).tobytes(),
             foto_origine,
             fonte,
             int(sincronizzato),
+            uid,
         ),
     )
     conn.commit()
@@ -108,7 +133,7 @@ def salva_embedding(
 
 
 def _righe_embedding_a_dict(righe: list) -> list[dict]:
-    """Converte righe raw (id, nome, vettore_blob, foto_origine, fonte) in dicts con vettore deserializzato."""
+    """Converte righe raw (id, nome, vettore_blob, foto_origine, fonte, uid) in dicts con vettore deserializzato."""
     return [
         {
             "id": id_,
@@ -116,15 +141,16 @@ def _righe_embedding_a_dict(righe: list) -> list[dict]:
             "vettore": np.frombuffer(blob, dtype=np.float32).tolist(),
             "foto_origine": foto_origine,
             "fonte": fonte,
+            "uid": uid,
         }
-        for id_, nome, blob, foto_origine, fonte in righe
+        for id_, nome, blob, foto_origine, fonte, uid in righe
     ]
 
 
 def embedding_da_sincronizzare(conn: sqlite3.Connection) -> list[dict]:
     """Ritorna le righe embedding non ancora inviate al NAS (sincronizzato = 0)."""
     righe = conn.execute(
-        "SELECT e.id, p.nome, e.vettore, e.foto_origine, e.fonte "
+        "SELECT e.id, p.nome, e.vettore, e.foto_origine, e.fonte, e.uid "
         "FROM embedding e JOIN persone p ON p.id = e.person_id "
         "WHERE e.sincronizzato = 0 ORDER BY e.id"
     ).fetchall()
@@ -178,12 +204,23 @@ def esporta_persone_dopo(conn: sqlite3.Connection, dopo_id: int, limite: int = 2
 def esporta_embedding_dopo(conn: sqlite3.Connection, dopo_id: int, limite: int = 200) -> list[dict]:
     """Ritorna gli embedding con id > dopo_id, per l'export incrementale verso i client locali."""
     righe = conn.execute(
-        "SELECT e.id, p.nome, e.vettore, e.foto_origine, e.fonte "
+        "SELECT e.id, p.nome, e.vettore, e.foto_origine, e.fonte, e.uid "
         "FROM embedding e JOIN persone p ON p.id = e.person_id "
         "WHERE e.id > ? ORDER BY e.id LIMIT ?",
         (dopo_id, limite),
     ).fetchall()
     return _righe_embedding_a_dict(righe)
+
+
+def embedding_uid_esiste(conn: sqlite3.Connection, uid: str) -> bool:
+    """Ritorna True se esiste gia' in locale un embedding con questo uid.
+
+    E' il controllo di duplicazione del pull incrementale: l'uid sopravvive al
+    giro di andata e ritorno verso il NAS, il nome file dello screenshot no."""
+    return (
+        conn.execute("SELECT 1 FROM embedding WHERE uid = ? LIMIT 1", (uid,)).fetchone()
+        is not None
+    )
 
 
 def foto_gia_processata(conn: sqlite3.Connection, foto: str) -> bool:

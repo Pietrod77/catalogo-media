@@ -1,6 +1,7 @@
 """Sincronizzazione incrementale tra un'installazione locale di fallback e il NAS."""
 
 import base64
+import logging
 import threading
 import time
 from pathlib import Path
@@ -12,12 +13,14 @@ from db.database import (
     aggiorna_sync_stato,
     connetti,
     embedding_da_sincronizzare,
-    foto_gia_processata,
+    embedding_uid_esiste,
     leggi_sync_stato,
     salva_embedding,
     segna_sincronizzato,
     trova_o_crea_persona,
 )
+
+logger = logging.getLogger(__name__)
 
 INTERVALLO_SECONDI = 60
 TIMEOUT_RAGGIUNGIBILITA = 2.0
@@ -44,26 +47,35 @@ def invia_pendenti(conn, url_base: str) -> int:
     il numero di righe inviate con successo."""
     inviati = 0
     for riga in embedding_da_sincronizzare(conn):
-        percorso_foto = Path(riga["foto_origine"])
-        if not percorso_foto.is_file():
-            continue
-        screenshot_base64 = base64.b64encode(percorso_foto.read_bytes()).decode("ascii")
         try:
-            risposta = requests.post(
-                f"{url_base}/conferma",
-                json={
-                    "nome": riga["nome"],
-                    "vettore": riga["vettore"],
-                    "screenshot_base64": screenshot_base64,
-                    "score": SCORE_REINVIO,
-                },
-                timeout=TIMEOUT_RICHIESTA,
-            )
-        except requests.exceptions.RequestException:
+            percorso_foto = Path(riga["foto_origine"])
+            if not percorso_foto.is_file():
+                continue
+            screenshot_base64 = base64.b64encode(percorso_foto.read_bytes()).decode("ascii")
+            try:
+                risposta = requests.post(
+                    f"{url_base}/conferma",
+                    json={
+                        "nome": riga["nome"],
+                        "vettore": riga["vettore"],
+                        "screenshot_base64": screenshot_base64,
+                        "score": SCORE_REINVIO,
+                        # L'uid della riga viaggia con essa: il NAS deve salvare
+                        # la stessa identita', non generarne una nuova, altrimenti
+                        # al pull successivo la conferma tornerebbe come duplicato.
+                        "uid": riga["uid"],
+                    },
+                    timeout=TIMEOUT_RICHIESTA,
+                )
+            except requests.exceptions.RequestException:
+                continue
+            if risposta.status_code == 200:
+                segna_sincronizzato(conn, riga["id"])
+                inviati += 1
+        except Exception:
+            # Un errore inatteso su una riga non deve fermare l'invio delle altre.
+            logger.exception("Errore nell'invio dell'embedding id=%s, riga saltata", riga.get("id"))
             continue
-        if risposta.status_code == 200:
-            segna_sincronizzato(conn, riga["id"])
-            inviati += 1
     return inviati
 
 
@@ -85,22 +97,44 @@ def scarica_incrementale(conn, url_base: str, cartella_sessioni: Path) -> int:
 
     cartella_conferme = cartella_sessioni / "conferme"
     cartella_conferme.mkdir(parents=True, exist_ok=True)
-    ricevuti = 0
-    for riga in dati["embedding"]:
-        nome_file = Path(riga["foto_origine"]).name
-        percorso_locale = cartella_conferme / nome_file
-        if foto_gia_processata(conn, str(percorso_locale)):
-            ultimo_embedding = max(ultimo_embedding, riga["id"])
-            continue
+
+    def salva_riga_remota(riga: dict) -> bool:
+        """Inserisce in locale una riga scaricata. Ritorna True se e' stata
+        davvero inserita, False se era gia' presente (stesso uid)."""
+        if embedding_uid_esiste(conn, riga["uid"]):
+            return False
         if riga["screenshot_base64"] is not None:
+            percorso_locale = cartella_conferme / Path(riga["foto_origine"]).name
             percorso_locale.write_bytes(base64.b64decode(riga["screenshot_base64"]))
+            foto_origine_locale = str(percorso_locale)
+        else:
+            # Nessun byte ricevuto: il file non esiste sul NAS (tipico delle righe
+            # storiche batch_iniziale). Meglio conservare il percorso originale
+            # che scriverne uno locale che non esistera' mai.
+            foto_origine_locale = riga["foto_origine"]
         person_id = trova_o_crea_persona(conn, riga["nome"])
         vettore = np.array(riga["vettore"], dtype=np.float32)
         salva_embedding(
-            conn, person_id, vettore, str(percorso_locale), riga["fonte"], sincronizzato=True
+            conn, person_id, vettore, foto_origine_locale, riga["fonte"],
+            sincronizzato=True, uid=riga["uid"],
         )
-        ultimo_embedding = max(ultimo_embedding, riga["id"])
-        ricevuti += 1
+        return True
+
+    ricevuti = 0
+    for riga in dati["embedding"]:
+        try:
+            if salva_riga_remota(riga):
+                ricevuti += 1
+        except Exception:
+            # Una riga malformata non deve bloccare per sempre il pull: la si
+            # salta rumorosamente e si avanza comunque il segnalino oltre di essa.
+            logger.exception(
+                "Errore nel salvataggio dell'embedding remoto id=%s, riga saltata",
+                riga.get("id"),
+            )
+        id_riga = riga.get("id")
+        if id_riga is not None:
+            ultimo_embedding = max(ultimo_embedding, id_riga)
 
     aggiorna_sync_stato(conn, ultimo_persona, ultimo_embedding)
     return ricevuti

@@ -138,6 +138,10 @@ def crea_app(
         vettore_lista = dati.get("vettore")
         screenshot_base64 = dati.get("screenshot_base64")
         score = dati.get("score")
+        # Presente solo quando la chiamata arriva dal worker di sync che reinvia
+        # una conferma fatta offline: in quel caso l'identita' della riga deve
+        # restare la stessa, non essere rigenerata. Il browser non lo manda mai.
+        uid = dati.get("uid")
 
         if not nome:
             return jsonify(errore="nome mancante"), 400
@@ -173,6 +177,7 @@ def crea_app(
             str(percorso_screenshot),
             "conferma_editing",
             sincronizzato=app.config["NAS_URL"] is None,
+            uid=uid,
         )
         conn.close()
 
@@ -215,6 +220,14 @@ def crea_app(
 
         return jsonify(persone=persone, embedding=embedding)
 
+    @app.get("/sync/stato")
+    def sync_stato():
+        conn = connetti(app.config["PERCORSO_DB"])
+        ultimo_persona = conn.execute("SELECT COALESCE(MAX(id), 0) FROM persone").fetchone()[0]
+        ultimo_embedding = conn.execute("SELECT COALESCE(MAX(id), 0) FROM embedding").fetchone()[0]
+        conn.close()
+        return jsonify(ultimo_persona_id=ultimo_persona, ultimo_embedding_id=ultimo_embedding)
+
     return app
 
 
@@ -240,4 +253,4 @@ if __name__ == "__main__":
         avvia_worker_sync(profilo["db"], profilo["sessioni"], NAS_URL)
     if os.environ.get("VOLTI_NO_BROWSER") != "1":
         webbrowser.open(f"http://127.0.0.1:{profilo['porta']}/")
-    app.run(host=HOST, port=profilo["porta"])
+    app.run(host=HOST, port=profilo["porta"], threaded=True)

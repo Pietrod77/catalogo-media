@@ -11,6 +11,7 @@ from db.database import (
     registra_scarto,
     foto_gia_processata,
     embedding_da_sincronizzare,
+    embedding_uid_esiste,
     segna_sincronizzato,
     leggi_sync_stato,
     aggiorna_sync_stato,
@@ -218,6 +219,100 @@ def test_init_db_migrazione_colonna_e_idempotente(tmp_path):
     colonne = [riga[1] for riga in conn.execute("PRAGMA table_info(embedding)").fetchall()]
     conn.close()
     assert colonne.count("sincronizzato") == 1
+
+
+def test_init_db_su_db_vecchio_aggiunge_colonna_uid(tmp_path):
+    percorso_db = tmp_path / "vecchio_senza_uid.db"
+    conn = sqlite3.connect(str(percorso_db))
+    conn.executescript(
+        """
+        CREATE TABLE persone (id INTEGER PRIMARY KEY, nome TEXT UNIQUE NOT NULL, note TEXT,
+            creato_il TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE embedding (id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL REFERENCES persone(id),
+            vettore BLOB NOT NULL, foto_origine TEXT NOT NULL, fonte TEXT NOT NULL,
+            creato_il TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    init_db(percorso_db)
+
+    conn = connetti(percorso_db)
+    colonne = [riga[1] for riga in conn.execute("PRAGMA table_info(embedding)").fetchall()]
+    conn.close()
+    assert "uid" in colonne
+
+
+def test_init_db_migrazione_colonna_uid_e_idempotente(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    init_db(percorso_db)  # seconda chiamata non deve sollevare errori
+
+    conn = connetti(percorso_db)
+    colonne = [riga[1] for riga in conn.execute("PRAGMA table_info(embedding)").fetchall()]
+    conn.close()
+    assert colonne.count("uid") == 1
+
+
+def test_salva_embedding_genera_uid_se_non_fornito(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+    person_id = trova_o_crea_persona(conn, "Mario Rossi")
+    vettore = np.ones(512, dtype=np.float32)
+
+    embedding_id = salva_embedding(conn, person_id, vettore, "foto.jpg", "conferma_editing")
+
+    uid = conn.execute("SELECT uid FROM embedding WHERE id = ?", (embedding_id,)).fetchone()[0]
+    conn.close()
+    assert uid is not None and uid != ""
+
+
+def test_salva_embedding_conserva_uid_fornito(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+    person_id = trova_o_crea_persona(conn, "Mario Rossi")
+    vettore = np.ones(512, dtype=np.float32)
+
+    embedding_id = salva_embedding(
+        conn, person_id, vettore, "foto.jpg", "conferma_editing", uid="uid-esplicito"
+    )
+
+    uid = conn.execute("SELECT uid FROM embedding WHERE id = ?", (embedding_id,)).fetchone()[0]
+    conn.close()
+    assert uid == "uid-esplicito"
+
+
+def test_embedding_uid_esiste_trova_uid_presente(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+    person_id = trova_o_crea_persona(conn, "Mario Rossi")
+    vettore = np.ones(512, dtype=np.float32)
+    salva_embedding(
+        conn, person_id, vettore, "foto.jpg", "conferma_editing", uid="uid-noto"
+    )
+
+    risultato = embedding_uid_esiste(conn, "uid-noto")
+    conn.close()
+    assert risultato is True
+
+
+def test_embedding_uid_esiste_false_per_uid_sconosciuto(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+    person_id = trova_o_crea_persona(conn, "Mario Rossi")
+    vettore = np.ones(512, dtype=np.float32)
+    salva_embedding(
+        conn, person_id, vettore, "foto.jpg", "conferma_editing", uid="uid-noto"
+    )
+
+    risultato = embedding_uid_esiste(conn, "uid-mai-visto")
+    conn.close()
+    assert risultato is False
 
 
 def test_init_db_crea_tabella_sync_stato(tmp_path):
