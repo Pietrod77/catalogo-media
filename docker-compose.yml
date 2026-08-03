@@ -1,0 +1,27 @@
+services:
+  volti-modelle:
+    build: .
+    image: volti-riconoscimento:latest
+    command: ["python", "app.py", "modelle"]
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./db:/app/db
+      - ./sessioni:/app/sessioni
+      - insightface-cache:/root/.insightface
+    restart: unless-stopped
+
+  volti-personaggi:
+    build: .
+    image: volti-riconoscimento:latest
+    command: ["python", "app.py", "personaggi"]
+    ports:
+      - "5002:5002"
+    volumes:
+      - ./db:/app/db
+      - ./sessioni:/app/sessioni
+      - insightface-cache:/root/.insightface
+    restart: unless-stopped
+
+volumes:
+  insightface-cache:
