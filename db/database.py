@@ -106,13 +106,8 @@ def salva_embedding(
     return cursor.lastrowid
 
 
-def embedding_da_sincronizzare(conn: sqlite3.Connection) -> list[dict]:
-    """Ritorna le righe embedding non ancora inviate al NAS (sincronizzato = 0)."""
-    righe = conn.execute(
-        "SELECT e.id, p.nome, e.vettore, e.foto_origine, e.fonte "
-        "FROM embedding e JOIN persone p ON p.id = e.person_id "
-        "WHERE e.sincronizzato = 0 ORDER BY e.id"
-    ).fetchall()
+def _righe_embedding_a_dict(righe: list) -> list[dict]:
+    """Converte righe raw (id, nome, vettore_blob, foto_origine, fonte) in dicts con vettore deserializzato."""
     return [
         {
             "id": id_,
@@ -123,6 +118,16 @@ def embedding_da_sincronizzare(conn: sqlite3.Connection) -> list[dict]:
         }
         for id_, nome, blob, foto_origine, fonte in righe
     ]
+
+
+def embedding_da_sincronizzare(conn: sqlite3.Connection) -> list[dict]:
+    """Ritorna le righe embedding non ancora inviate al NAS (sincronizzato = 0)."""
+    righe = conn.execute(
+        "SELECT e.id, p.nome, e.vettore, e.foto_origine, e.fonte "
+        "FROM embedding e JOIN persone p ON p.id = e.person_id "
+        "WHERE e.sincronizzato = 0 ORDER BY e.id"
+    ).fetchall()
+    return _righe_embedding_a_dict(righe)
 
 
 def segna_sincronizzato(conn: sqlite3.Connection, embedding_id: int) -> None:
@@ -177,16 +182,7 @@ def esporta_embedding_dopo(conn: sqlite3.Connection, dopo_id: int, limite: int =
         "WHERE e.id > ? ORDER BY e.id LIMIT ?",
         (dopo_id, limite),
     ).fetchall()
-    return [
-        {
-            "id": id_,
-            "nome": nome,
-            "vettore": np.frombuffer(blob, dtype=np.float32).tolist(),
-            "foto_origine": foto_origine,
-            "fonte": fonte,
-        }
-        for id_, nome, blob, foto_origine, fonte in righe
-    ]
+    return _righe_embedding_a_dict(righe)
 
 
 def foto_gia_processata(conn: sqlite3.Connection, foto: str) -> bool:
