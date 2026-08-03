@@ -1,8 +1,22 @@
 import sqlite3
 
+import numpy as np
 import pytest
 
-from db.database import init_db, connetti
+from db.database import (
+    init_db,
+    connetti,
+    trova_o_crea_persona,
+    salva_embedding,
+    registra_scarto,
+    foto_gia_processata,
+    embedding_da_sincronizzare,
+    segna_sincronizzato,
+    leggi_sync_stato,
+    aggiorna_sync_stato,
+    esporta_persone_dopo,
+    esporta_embedding_dopo,
+)
 
 
 def test_init_db_crea_le_tre_tabelle(tmp_path):
@@ -68,16 +82,6 @@ def test_foreign_key_person_id_inesistente_solleva_integrity_error(tmp_path):
             )
     finally:
         conn.close()
-
-
-import numpy as np
-
-from db.database import (
-    trova_o_crea_persona,
-    salva_embedding,
-    registra_scarto,
-    foto_gia_processata,
-)
 
 
 def test_trova_o_crea_persona_crea_nuova_persona(tmp_path):
@@ -225,3 +229,133 @@ def test_init_db_crea_tabella_sync_stato(tmp_path):
     tabelle = {riga[0] for riga in cursor.fetchall()}
     conn.close()
     assert "sync_stato" in tabelle
+
+
+def test_salva_embedding_default_sincronizzato_true(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+    person_id = trova_o_crea_persona(conn, "Mario Rossi")
+    vettore = np.random.rand(512).astype(np.float32)
+
+    embedding_id = salva_embedding(conn, person_id, vettore, "foto.jpg", "batch_iniziale")
+
+    riga = conn.execute(
+        "SELECT sincronizzato FROM embedding WHERE id = ?", (embedding_id,)
+    ).fetchone()
+    conn.close()
+    assert riga[0] == 1
+
+
+def test_salva_embedding_sincronizzato_false(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+    person_id = trova_o_crea_persona(conn, "Mario Rossi")
+    vettore = np.random.rand(512).astype(np.float32)
+
+    embedding_id = salva_embedding(
+        conn, person_id, vettore, "foto.jpg", "conferma_editing", sincronizzato=False
+    )
+
+    riga = conn.execute(
+        "SELECT sincronizzato FROM embedding WHERE id = ?", (embedding_id,)
+    ).fetchone()
+    conn.close()
+    assert riga[0] == 0
+
+
+def test_embedding_da_sincronizzare_ritorna_solo_le_pendenti(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+    id_mario = trova_o_crea_persona(conn, "Mario Rossi")
+    vettore = np.random.rand(512).astype(np.float32)
+    salva_embedding(conn, id_mario, vettore, "sincronizzata.jpg", "batch_iniziale")
+    embedding_id_pendente = salva_embedding(
+        conn, id_mario, vettore, "pendente.jpg", "conferma_editing", sincronizzato=False
+    )
+
+    pendenti = embedding_da_sincronizzare(conn)
+    conn.close()
+
+    assert len(pendenti) == 1
+    assert pendenti[0]["id"] == embedding_id_pendente
+    assert pendenti[0]["nome"] == "Mario Rossi"
+    assert pendenti[0]["foto_origine"] == "pendente.jpg"
+    assert pendenti[0]["fonte"] == "conferma_editing"
+    assert len(pendenti[0]["vettore"]) == 512
+
+
+def test_segna_sincronizzato_aggiorna_la_riga(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+    id_mario = trova_o_crea_persona(conn, "Mario Rossi")
+    vettore = np.random.rand(512).astype(np.float32)
+    embedding_id = salva_embedding(
+        conn, id_mario, vettore, "pendente.jpg", "conferma_editing", sincronizzato=False
+    )
+
+    segna_sincronizzato(conn, embedding_id)
+
+    riga = conn.execute(
+        "SELECT sincronizzato FROM embedding WHERE id = ?", (embedding_id,)
+    ).fetchone()
+    conn.close()
+    assert riga[0] == 1
+
+
+def test_leggi_sync_stato_crea_riga_singleton_se_assente(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+
+    stato = leggi_sync_stato(conn)
+    conn.close()
+
+    assert stato == (0, 0)
+
+
+def test_aggiorna_sync_stato_persiste_valori(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+
+    aggiorna_sync_stato(conn, 5, 10)
+    stato = leggi_sync_stato(conn)
+    conn.close()
+
+    assert stato == (5, 10)
+
+
+def test_esporta_persone_dopo_filtra_per_id(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+    id_prima = trova_o_crea_persona(conn, "Prima Persona")
+    trova_o_crea_persona(conn, "Seconda Persona")
+
+    risultato = esporta_persone_dopo(conn, id_prima)
+    conn.close()
+
+    assert [p["nome"] for p in risultato] == ["Seconda Persona"]
+
+
+def test_esporta_embedding_dopo_include_vettore_come_lista(tmp_path):
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+    id_mario = trova_o_crea_persona(conn, "Mario Rossi")
+    vettore_originale = np.random.rand(512).astype(np.float32)
+    salva_embedding(conn, id_mario, vettore_originale, "foto.jpg", "batch_iniziale")
+
+    risultato = esporta_embedding_dopo(conn, 0)
+    conn.close()
+
+    assert len(risultato) == 1
+    riga = risultato[0]
+    assert riga["nome"] == "Mario Rossi"
+    assert riga["foto_origine"] == "foto.jpg"
+    assert riga["fonte"] == "batch_iniziale"
+    assert np.allclose(riga["vettore"], vettore_originale.tolist())
