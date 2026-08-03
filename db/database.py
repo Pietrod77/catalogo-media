@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS embedding (
     vettore BLOB NOT NULL,
     foto_origine TEXT NOT NULL,
     fonte TEXT NOT NULL,
+    sincronizzato INTEGER NOT NULL DEFAULT 1,
     creato_il TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -27,6 +28,12 @@ CREATE TABLE IF NOT EXISTS log_scarti (
     foto TEXT NOT NULL,
     motivo TEXT NOT NULL,
     creato_il TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sync_stato (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    ultimo_persona_id_nas INTEGER NOT NULL DEFAULT 0,
+    ultimo_embedding_id_nas INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -39,12 +46,25 @@ def connetti(percorso_db: str | Path) -> sqlite3.Connection:
     return conn
 
 
+def _migra_colonna_sincronizzato(conn: sqlite3.Connection) -> None:
+    """Aggiunge embedding.sincronizzato ai DB creati prima di questa modifica
+    (CREATE TABLE IF NOT EXISTS non altera tabelle gia' esistenti)."""
+    colonne = [riga[1] for riga in conn.execute("PRAGMA table_info(embedding)").fetchall()]
+    if "sincronizzato" not in colonne:
+        conn.execute(
+            "ALTER TABLE embedding ADD COLUMN sincronizzato INTEGER NOT NULL DEFAULT 1"
+        )
+        conn.commit()
+
+
 def init_db(percorso_db: str | Path) -> None:
-    """Crea le tabelle persone, embedding, log_scarti se non esistono già."""
+    """Crea le tabelle persone, embedding, log_scarti, sync_stato se non esistono già,
+    e migra i DB pre-esistenti aggiungendo la colonna sincronizzato se assente."""
     conn = connetti(percorso_db)
     try:
         conn.executescript(SCHEMA)
         conn.commit()
+        _migra_colonna_sincronizzato(conn)
     finally:
         conn.close()
 
