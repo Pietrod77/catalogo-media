@@ -5,10 +5,14 @@ services:
     command: ["python", "app.py", "modelle"]
     ports:
       - "5001:5001"
+    # archivio_storico/ va popolato a mano sul NAS con l'archivio foto storico, se si vuole che le miniature di riferimento delle foto pre-esistenti funzionino anche in modalita' NAS
     volumes:
       - ./db:/app/db
       - ./sessioni:/app/sessioni
+      - ./archivio_storico:/app/archivio_storico
       - insightface-cache:/root/.insightface
+    environment:
+      - VOLTI_ARCHIVIO_STORICO=/app/archivio_storico
     restart: unless-stopped
 
   volti-personaggi:
@@ -17,10 +21,14 @@ services:
     command: ["python", "app.py", "personaggi"]
     ports:
       - "5002:5002"
+    # archivio_storico/ va popolato a mano sul NAS con l'archivio foto storico, se si vuole che le miniature di riferimento delle foto pre-esistenti funzionino anche in modalita' NAS
     volumes:
       - ./db:/app/db
       - ./sessioni:/app/sessioni
+      - ./archivio_storico:/app/archivio_storico
       - insightface-cache:/root/.insightface
+    environment:
+      - VOLTI_ARCHIVIO_STORICO=/app/archivio_storico
     restart: unless-stopped
 
 volumes:

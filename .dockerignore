@@ -5,3 +5,8 @@ __pycache__/
 .git/
 tests/
 docs/
+sessioni/
+db/*.db
+logs/
+.superpowers/
+.claude/

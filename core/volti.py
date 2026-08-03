@@ -1,5 +1,6 @@
 """Rilevamento volti e calcolo embedding facciali tramite InsightFace."""
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,13 +21,20 @@ class VoltoRilevato:
 SOGLIA_QUALITA_MINIMA = 0.5
 
 
+_lock = threading.Lock()
+
+
 def carica_modello() -> FaceAnalysis:
-    """Carica il modello InsightFace (buffalo_l) una sola volta per processo."""
+    """Carica il modello InsightFace (buffalo_l) una sola volta per processo.
+
+    Il lock evita che due richieste concorrenti a freddo costruiscano ciascuna
+    la propria istanza di FaceAnalysis."""
     global _modello
-    if _modello is None:
-        _modello = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
-        _modello.prepare(ctx_id=-1, det_size=(640, 640))
-    return _modello
+    with _lock:
+        if _modello is None:
+            _modello = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+            _modello.prepare(ctx_id=-1, det_size=(640, 640))
+        return _modello
 
 
 def rileva_volti(percorso_foto: str | Path) -> list[VoltoRilevato]:

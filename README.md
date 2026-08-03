@@ -28,3 +28,7 @@ Design completo: `docs/superpowers/specs/2026-07-12-riconoscimento-volti-design.
 ## Regola d'oro multi-computer
 
 Non tenere l'app aperta su due computer contemporaneamente: il database SQLite condiviso non è pensato per scritture concorrenti da macchine diverse. Chiudi l'app e aspetta il completamento della sincronizzazione prima di passare a un altro computer.
+
+## Sincronizzazione con il NAS
+
+Quando la variabile `VOLTI_NAS_URL` è impostata (già fatto negli script `Avvia Modelle.command` e `Avvia Personaggi.command`), l'app prova anche a sincronizzarsi in background con l'istanza sul NAS: invia le conferme fatte offline e scarica le novità. Se una macchina viene configurata come fallback locale per la prima volta e contiene già i dati storici, esegui una volta sola `python scripts/allinea_sync_stato.py <percorso_db> <url_nas>` prima di usarla. Serve ad allineare il segnalino di sincronizzazione allo stato attuale del NAS, altrimenti al primo avvio l'app riscaricherebbe l'intero archivio storico già presente in locale.
