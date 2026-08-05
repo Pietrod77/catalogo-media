@@ -1,4 +1,5 @@
 import shutil
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -7,7 +8,7 @@ from PIL import Image
 
 from core.volti import VoltoRilevato
 from db.database import connetti, init_db, salva_embedding, trova_o_crea_persona
-from scripts.rinomina_batch import _sanitizza_nome, rinomina_da_cartella
+from scripts.rinomina_batch import _sanitizza_nome, main, rinomina_da_cartella
 
 
 def _vettore_normalizzato(seed: int) -> np.ndarray:
@@ -226,7 +227,8 @@ def test_eccezione_non_valueerror_non_blocca_batch(db_di_prova, tmp_path, monkey
 
     riepilogo = rinomina_da_cartella(cartella_input, cartella_output, db_di_prova)
 
-    assert riepilogo["errore_lettura_immagine"] == 1
+    assert riepilogo["errore_copia"] == 1
+    assert riepilogo["errore_lettura_immagine"] == 0
     assert riepilogo["foto_totali"] == 2
     assert (cartella_output / "ok_NESSUN_VOLTO.jpg").exists()
     assert not list(cartella_output.glob("errore*"))
@@ -249,7 +251,129 @@ def test_eccezione_da_segmento_per_volto_non_blocca_batch(db_di_prova, tmp_path,
 
     riepilogo = rinomina_da_cartella(cartella_input, cartella_output, db_di_prova)
 
-    assert riepilogo["errore_lettura_immagine"] == 1
+    assert riepilogo["errore_riconoscimento"] == 1
+    assert riepilogo["errore_lettura_immagine"] == 0
     assert riepilogo["foto_totali"] == 2
     assert (cartella_output / "ok_NESSUN_VOLTO.jpg").exists()
     assert not list(cartella_output.glob("errore*"))
+
+
+def test_main_fallisce_se_db_mancante(tmp_path, monkeypatch):
+    """main() deve fermarsi con errore prima di elaborare qualunque foto se il
+    DB di default non esiste, invece di lasciare che connetti() lo crei vuoto
+    silenziosamente."""
+    cartella_input = tmp_path / "input"
+    cartella_input.mkdir()
+    cartella_output = tmp_path / "output"
+    percorso_db_inesistente = tmp_path / "non_esiste.db"
+
+    monkeypatch.setattr("scripts.rinomina_batch.PERCORSO_DB_DEFAULT", percorso_db_inesistente)
+
+    def _rinomina_da_cartella_non_deve_essere_chiamata(*args, **kwargs):
+        pytest.fail("rinomina_da_cartella non deve essere chiamata se il DB manca")
+
+    monkeypatch.setattr(
+        "scripts.rinomina_batch.rinomina_da_cartella",
+        _rinomina_da_cartella_non_deve_essere_chiamata,
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["rinomina_batch.py", str(cartella_input), str(cartella_output)]
+    )
+
+    codice_uscita = main()
+
+    assert codice_uscita == 1
+    assert not percorso_db_inesistente.exists()
+
+
+def test_main_avvisa_se_db_vuoto_ma_procede(tmp_path, monkeypatch, capsys):
+    """Un DB esistente ma senza embedding non deve bloccare l'esecuzione, ma deve
+    stampare un avviso perché tutte le foto risulteranno sconosciute."""
+    percorso_db = tmp_path / "vuoto.db"
+    init_db(percorso_db)
+
+    cartella_input = tmp_path / "input"
+    cartella_output = tmp_path / "output"
+    _crea_immagine_prova(cartella_input / "foto_a.jpg")
+
+    monkeypatch.setattr("scripts.rinomina_batch.PERCORSO_DB_DEFAULT", percorso_db)
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: [])
+    monkeypatch.setattr(
+        sys, "argv", ["rinomina_batch.py", str(cartella_input), str(cartella_output)]
+    )
+
+    codice_uscita = main()
+
+    catturato = capsys.readouterr()
+    assert codice_uscita == 0
+    assert "Attenzione" in catturato.out
+    assert (cartella_output / "foto_a_NESSUN_VOLTO.jpg").exists()
+
+
+def test_molti_volti_overflow_nome_file_troncato(db_di_prova, tmp_path, monkeypatch):
+    """Una foto con molte facce (es. foto di gruppo) non deve produrre un nome
+    file che supera il limite di lunghezza del filesystem: oltre il budget i
+    segmenti in eccesso vengono sostituiti da un marcatore _ALTRI_<N>."""
+    conn = connetti(db_di_prova)
+    volti_finti = []
+    for indice in range(20):
+        vettore = _vettore_normalizzato(seed=1000 + indice)
+        id_persona = trova_o_crea_persona(conn, f"Persona Numero{indice:02d}")
+        salva_embedding(conn, id_persona, vettore, f"persona{indice}_0.jpg", "batch_iniziale")
+        volti_finti.append(
+            VoltoRilevato(vettore=vettore, bbox=(indice, indice, indice + 10, indice + 10), score=0.9)
+        )
+    conn.close()
+
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: volti_finti)
+
+    cartella_input = tmp_path / "input"
+    cartella_output = tmp_path / "output"
+    _crea_immagine_prova(cartella_input / "gruppo.jpg")
+
+    riepilogo = rinomina_da_cartella(cartella_input, cartella_output, db_di_prova)
+
+    file_output = list(cartella_output.glob("*.jpg"))
+    assert len(file_output) == 1
+    nome_file = file_output[0].name
+    assert len(nome_file.encode("utf-8")) <= 200
+    assert "_ALTRI_" in nome_file
+    assert nome_file.endswith(".jpg")
+    # il marcatore deve precedere l'estensione (fine del nome troncato)
+    corpo, _, estensione = nome_file.rpartition(".")
+    assert corpo.split("_ALTRI_")[-1].isdigit()
+    assert riepilogo["certo"] == 20
+
+
+def test_rerun_pulisce_file_obsoleti_stessa_foto(tmp_path, monkeypatch):
+    """Ri-eseguire lo script sulla stessa cartella di output dopo che il DB è
+    cambiato non deve lasciare accumulati vecchi file con nomi contraddittori
+    per la stessa foto sorgente (es. _sconosciuto rimasto accanto al nuovo
+    _Nome_Cognome_NN dopo che la persona è stata aggiunta al DB)."""
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+
+    cartella_input = tmp_path / "input"
+    cartella_output = tmp_path / "output"
+    _crea_immagine_prova(cartella_input / "foto_multi.jpg")
+
+    vettore = _vettore_normalizzato(seed=2000)
+    volto_finto = VoltoRilevato(vettore=vettore, bbox=(10, 10, 50, 50), score=0.9)
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: [volto_finto])
+
+    # primo run: la persona non è ancora nel DB -> sconosciuto
+    rinomina_da_cartella(cartella_input, cartella_output, percorso_db)
+    assert (cartella_output / "foto_multi_sconosciuto.jpg").exists()
+
+    # il DB viene aggiornato: la stessa persona ora ha un match certo
+    conn = connetti(percorso_db)
+    id_persona = trova_o_crea_persona(conn, "Mario Rossi")
+    salva_embedding(conn, id_persona, vettore, "mario_0.jpg", "batch_iniziale")
+    conn.close()
+
+    # secondo run sulla stessa cartella di output
+    rinomina_da_cartella(cartella_input, cartella_output, percorso_db)
+
+    file_output = list(cartella_output.glob("foto_multi_*.jpg"))
+    assert len(file_output) == 1
+    assert file_output[0].name == "foto_multi_Mario_Rossi_100.jpg"
