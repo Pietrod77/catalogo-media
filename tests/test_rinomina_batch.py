@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -203,3 +204,29 @@ def test_immagine_illeggibile_non_blocca_le_altre(db_di_prova, tmp_path, monkeyp
     assert riepilogo["foto_totali"] == 2
     assert (cartella_output / "normale_NESSUN_VOLTO.jpg").exists()
     assert not list(cartella_output.glob("corrotta*"))
+
+
+def test_eccezione_non_valueerror_non_blocca_batch(db_di_prova, tmp_path, monkeypatch):
+    """Verifica che eccezioni non-ValueError (e.g. da shutil.copy2) non abortono il batch."""
+
+    real_copy2 = shutil.copy2
+
+    def _shutil_copy2_finto(src, dst):
+        if "errore" in str(src):
+            raise RuntimeError("Errore disco simulato")
+        real_copy2(src, dst)
+
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: [])
+    monkeypatch.setattr("scripts.rinomina_batch.shutil.copy2", _shutil_copy2_finto)
+
+    cartella_input = tmp_path / "input"
+    cartella_output = tmp_path / "output"
+    _crea_immagine_prova(cartella_input / "errore.jpg")
+    _crea_immagine_prova(cartella_input / "ok.jpg")
+
+    riepilogo = rinomina_da_cartella(cartella_input, cartella_output, db_di_prova)
+
+    assert riepilogo["errore_lettura_immagine"] == 1
+    assert riepilogo["foto_totali"] == 2
+    assert (cartella_output / "ok_NESSUN_VOLTO.jpg").exists()
+    assert not list(cartella_output.glob("errore*"))

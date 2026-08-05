@@ -76,33 +76,42 @@ def rinomina_da_cartella(
         {percorso for pattern in ESTENSIONI for percorso in cartella_input.rglob(pattern)}
     )
 
-    for foto in foto_trovate:
-        riepilogo["foto_totali"] += 1
-        try:
-            volti = rileva_volti(foto)
-        except ValueError as errore:
-            riepilogo["errore_lettura_immagine"] += 1
-            print(f"[errore_lettura_immagine] {foto.name}: {errore}")
-            continue
+    try:
+        for foto in foto_trovate:
+            riepilogo["foto_totali"] += 1
+            try:
+                volti = rileva_volti(foto)
+            except ValueError as errore:
+                riepilogo["errore_lettura_immagine"] += 1
+                print(f"[errore_lettura_immagine] {foto.name}: {errore}")
+                continue
+            except Exception as errore:
+                riepilogo["errore_lettura_immagine"] += 1
+                print(f"[errore_lettura_immagine] {foto.name}: {errore}")
+                continue
 
-        if not volti:
-            riepilogo["nessun_volto"] += 1
-            nuovo_nome = f"{foto.stem}_NESSUN_VOLTO{foto.suffix}"
-        else:
-            segmenti = []
-            for volto in volti:
-                segmento, categoria = _segmento_per_volto(volto, conn)
-                segmenti.append(segmento)
-                riepilogo[categoria] += 1
-            nuovo_nome = f"{foto.stem}_{'_'.join(segmenti)}{foto.suffix}"
+            if not volti:
+                riepilogo["nessun_volto"] += 1
+                nuovo_nome = f"{foto.stem}_NESSUN_VOLTO{foto.suffix}"
+            else:
+                segmenti = []
+                for volto in volti:
+                    segmento, categoria = _segmento_per_volto(volto, conn)
+                    segmenti.append(segmento)
+                    riepilogo[categoria] += 1
+                nuovo_nome = f"{foto.stem}_{'_'.join(segmenti)}{foto.suffix}"
 
-        percorso_relativo = foto.relative_to(cartella_input).parent
-        cartella_output_foto = cartella_output / percorso_relativo
-        cartella_output_foto.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(foto, cartella_output_foto / nuovo_nome)
-        print(f"[{nuovo_nome}] <- {foto.name}")
-
-    conn.close()
+            try:
+                percorso_relativo = foto.relative_to(cartella_input).parent
+                cartella_output_foto = cartella_output / percorso_relativo
+                cartella_output_foto.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(foto, cartella_output_foto / nuovo_nome)
+                print(f"[{nuovo_nome}] <- {foto.name}")
+            except Exception as errore:
+                riepilogo["errore_lettura_immagine"] += 1
+                print(f"[errore_lettura_immagine] {foto.name}: {errore}")
+    finally:
+        conn.close()
     return riepilogo
 
 
