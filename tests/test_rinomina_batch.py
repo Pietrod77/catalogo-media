@@ -132,15 +132,17 @@ def test_nessun_volto_rilevato(db_di_prova, tmp_path, monkeypatch):
     assert riepilogo["nessun_volto"] == 1
 
 
-def test_volto_sotto_soglia_qualita_trattato_come_nessun_volto(db_di_prova, tmp_path, monkeypatch):
+def test_volto_area_piccola_trattato_come_nessun_volto(db_di_prova, tmp_path, monkeypatch):
     vettore = _vettore_normalizzato(seed=50)
     conn = connetti(db_di_prova)
     id_persona = trova_o_crea_persona(conn, "Mario Rossi")
     salva_embedding(conn, id_persona, vettore, "mario_0.jpg", "batch_iniziale")
     conn.close()
 
-    volto_sfocato = VoltoRilevato(vettore=vettore, bbox=(10, 10, 50, 50), score=0.2)
-    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: [volto_sfocato])
+    # Immagine di prova 100x100 (area 10000). bbox (10,10,12,12) -> area 4,
+    # rapporto 4/10000 = 0.04%, ben sotto la soglia RAPPORTO_AREA_MINIMO (0.4%).
+    volto_piccolo = VoltoRilevato(vettore=vettore, bbox=(10, 10, 12, 12), score=0.9)
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: [volto_piccolo])
 
     cartella_input = tmp_path / "input"
     cartella_output = tmp_path / "output"
@@ -153,7 +155,7 @@ def test_volto_sotto_soglia_qualita_trattato_come_nessun_volto(db_di_prova, tmp_
     assert file_output[0].name == "foto_sfocata_NESSUN_VOLTO.jpg"
     assert riepilogo["nessun_volto"] == 1
     assert riepilogo["certo"] == 0
-    assert riepilogo["scartati_bassa_qualita"] == 1
+    assert riepilogo["scartati_piccoli_sfondo"] == 1
 
 
 def test_volto_valido_e_volto_scartato_stessa_foto(db_di_prova, tmp_path, monkeypatch):
@@ -166,8 +168,11 @@ def test_volto_valido_e_volto_scartato_stessa_foto(db_di_prova, tmp_path, monkey
     salva_embedding(conn, id_anna, v2, "anna_0.jpg", "batch_iniziale")
     conn.close()
 
+    # Immagine di prova 100x100 (area 10000). volto_valido bbox (0,0,40,40) ->
+    # area 1600, rapporto 16% (tenuto). volto_scartato bbox (10,10,12,12) ->
+    # area 4, rapporto 0.04% (scartato, sotto RAPPORTO_AREA_MINIMO 0.4%).
     volto_valido = VoltoRilevato(vettore=v1, bbox=(0, 0, 40, 40), score=0.9)
-    volto_scartato = VoltoRilevato(vettore=v2, bbox=(50, 50, 90, 90), score=0.3)
+    volto_scartato = VoltoRilevato(vettore=v2, bbox=(10, 10, 12, 12), score=0.9)
     monkeypatch.setattr(
         "scripts.rinomina_batch.rileva_volti", lambda percorso: [volto_valido, volto_scartato]
     )
@@ -182,7 +187,7 @@ def test_volto_valido_e_volto_scartato_stessa_foto(db_di_prova, tmp_path, monkey
     assert len(file_output) == 1
     assert file_output[0].name == "foto_mista_Mario_Rossi_100.jpg"
     assert riepilogo["certo"] == 1
-    assert riepilogo["scartati_bassa_qualita"] == 1
+    assert riepilogo["scartati_piccoli_sfondo"] == 1
 
 
 def test_due_volti_stessa_foto_segmenti_incatenati(db_di_prova, tmp_path, monkeypatch):
@@ -515,7 +520,7 @@ def test_formatta_riepilogo_breve_conteggi_base():
         "ambiguo": 14,
         "sconosciuto": 40,
         "nessun_volto": 18,
-        "scartati_bassa_qualita": 5,
+        "scartati_piccoli_sfondo": 5,
         "errore_lettura_immagine": 0,
         "errore_riconoscimento": 0,
         "errore_copia": 0,
@@ -539,13 +544,61 @@ def test_formatta_riepilogo_breve_include_riga_errori_se_presenti():
         "ambiguo": 0,
         "sconosciuto": 3,
         "nessun_volto": 1,
-        "scartati_bassa_qualita": 0,
-        "errore_lettura_immagine": 1,
+        "scartati_piccoli_sfondo": 0,
+        "errore_lettura_immagine": 2,
         "errore_riconoscimento": 0,
         "errore_copia": 0,
     }
     testo = _formatta_riepilogo_breve(riepilogo)
-    assert "1 errori (dettagli in terminale)" in testo
+    assert "2 errori (dettagli in terminale)" in testo
+
+
+def test_formatta_riepilogo_breve_singolare_con_conteggi_a_uno():
+    """Verifica che le parole flesse (nome/nomi, certo/certi,
+    sconosciuto/sconosciuti, errore/errori) usino la forma singolare corretta
+    quando il conteggio è 1 — "foto" non si flette e "senza volto a fuoco"
+    non è interessato da questa correzione."""
+    riepilogo_nome_singolare = {
+        "foto_totali": 1,
+        "certo": 1,
+        "ambiguo": 0,
+        "sconosciuto": 0,
+        "nessun_volto": 0,
+        "scartati_piccoli_sfondo": 0,
+        "errore_lettura_immagine": 0,
+        "errore_riconoscimento": 0,
+        "errore_copia": 0,
+    }
+    testo = _formatta_riepilogo_breve(riepilogo_nome_singolare)
+    assert "1 nome trovato (1 certo, 0 da verificare)" in testo
+
+    riepilogo_sconosciuto_singolare = {
+        "foto_totali": 1,
+        "certo": 0,
+        "ambiguo": 0,
+        "sconosciuto": 1,
+        "nessun_volto": 0,
+        "scartati_piccoli_sfondo": 0,
+        "errore_lettura_immagine": 0,
+        "errore_riconoscimento": 0,
+        "errore_copia": 0,
+    }
+    testo = _formatta_riepilogo_breve(riepilogo_sconosciuto_singolare)
+    assert "1 sconosciuto" in testo
+
+    riepilogo_errore_singolare = {
+        "foto_totali": 1,
+        "certo": 0,
+        "ambiguo": 0,
+        "sconosciuto": 0,
+        "nessun_volto": 0,
+        "scartati_piccoli_sfondo": 0,
+        "errore_lettura_immagine": 1,
+        "errore_riconoscimento": 0,
+        "errore_copia": 0,
+    }
+    testo = _formatta_riepilogo_breve(riepilogo_errore_singolare)
+    assert "1 errore (dettagli in terminale)" in testo
 
 
 def test_output_per_foto_va_su_stderr_non_stdout(db_di_prova, tmp_path, monkeypatch, capsys):

@@ -8,17 +8,21 @@ i volti con InsightFace, li confronta col database "personaggi", e copia
 ogni foto in <cartella_output> (stessa struttura di sottocartelle) col nome
 del file originale seguito da un segmento per ogni volto trovato: nome e
 punteggio se il match è certo o ambiguo, "sconosciuto" se nessun candidato
-valido, "NESSUN_VOLTO" se non è stato rilevato alcun volto nella foto.
+valido, "NESSUN_VOLTO" se non è stato rilevato alcun volto nella foto o se
+tutti i volti rilevati erano troppo piccoli/sullo sfondo (vedi
+RAPPORTO_AREA_MINIMO).
 """
 
 import shutil
 import sys
 from pathlib import Path
 
+from PIL import Image
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.matching import calcola_candidati, classifica_match
-from core.volti import SOGLIA_QUALITA_MINIMA, rileva_volti
+from core.volti import rileva_volti
 from db.database import connetti
 
 PERCORSO_DB_DEFAULT = Path(__file__).resolve().parent.parent / "db" / "volti.db"
@@ -29,6 +33,13 @@ ESTENSIONI = ("*.jpg", "*.JPG", "*.jpeg", "*.JPEG", "*.png", "*.PNG")
 # di ~255 byte per componente di percorso del filesystem (macOS/APFS). Sopra
 # questa soglia i segmenti in eccesso vengono troncati (vedi _tronca_nome_file).
 LIMITE_BYTE_NOME_FILE = 200
+
+# Rapporto minimo (area volto / area foto) sotto il quale un volto è considerato
+# sullo sfondo/troppo piccolo per un riconoscimento affidabile. Calibrato su un
+# campione reale di 62 volti in 20 foto: i volti "principali" occupavano tra lo
+# 0,70% e il 3,25% dell'area della foto, tutti gli altri (sfondo/sfocati) tra lo
+# 0,02% e lo 0,22% — soglia scelta nel mezzo di quel salto.
+RAPPORTO_AREA_MINIMO = 0.004
 
 
 def _sanitizza_nome(nome: str) -> str:
@@ -74,14 +85,21 @@ def _tronca_nome_file(stem: str, segmenti: list[str], suffisso: str) -> str:
     return "_".join(pezzi) + suffisso
 
 
+def _pluralizza(numero: int, singolare: str, plurale: str) -> str:
+    return singolare if numero == 1 else plurale
+
+
 def _formatta_riepilogo_breve(riepilogo: dict[str, int]) -> str:
     """Costruisce la riga di riepilogo breve mostrata nel dialog del droplet
     (che cattura solo stdout) invece del dump completo del dizionario."""
     nomi_trovati = riepilogo["certo"] + riepilogo["ambiguo"]
+    parola_nomi = _pluralizza(nomi_trovati, "nome trovato", "nomi trovati")
+    parola_certi = _pluralizza(riepilogo["certo"], "certo", "certi")
+    parola_sconosciuti = _pluralizza(riepilogo["sconosciuto"], "sconosciuto", "sconosciuti")
     righe = [
         f"{riepilogo['foto_totali']} foto",
-        f"{nomi_trovati} nomi trovati ({riepilogo['certo']} certi, {riepilogo['ambiguo']} da verificare)",
-        f"{riepilogo['sconosciuto']} sconosciuti",
+        f"{nomi_trovati} {parola_nomi} ({riepilogo['certo']} {parola_certi}, {riepilogo['ambiguo']} da verificare)",
+        f"{riepilogo['sconosciuto']} {parola_sconosciuti}",
         f"{riepilogo['nessun_volto']} senza volto a fuoco",
     ]
     testo = righe[0] + " — " + ", ".join(righe[1:])
@@ -92,7 +110,8 @@ def _formatta_riepilogo_breve(riepilogo: dict[str, int]) -> str:
         + riepilogo["errore_copia"]
     )
     if errori_totali > 0:
-        testo += f"\n{errori_totali} errori (dettagli in terminale)"
+        parola_errori = _pluralizza(errori_totali, "errore", "errori")
+        testo += f"\n{errori_totali} {parola_errori} (dettagli in terminale)"
     return testo
 
 
@@ -104,14 +123,15 @@ def rinomina_da_cartella(
     sottocartelle dell'input. Gli originali non vengono mai modificati.
 
     Ritorna un riepilogo: {'foto_totali': N, 'certo': N, 'ambiguo': N,
-    'sconosciuto': N, 'nessun_volto': N, 'errore_lettura_immagine': N,
-    'errore_riconoscimento': N, 'errore_copia': N}.
-    I conteggi certo/ambiguo/sconosciuto/nessun_volto sono per volto (una foto
-    con più volti può contribuire a più categorie); foto_totali,
-    errore_lettura_immagine (fallimento di rileva_volti), errore_riconoscimento
-    (fallimento nel confronto col DB per uno dei volti) ed errore_copia
-    (fallimento nella creazione della cartella o nella copia del file) sono
-    per foto.
+    'sconosciuto': N, 'nessun_volto': N, 'scartati_piccoli_sfondo': N,
+    'errore_lettura_immagine': N, 'errore_riconoscimento': N,
+    'errore_copia': N}.
+    I conteggi certo/ambiguo/sconosciuto/nessun_volto/scartati_piccoli_sfondo
+    sono per volto (una foto con più volti può contribuire a più categorie);
+    foto_totali, errore_lettura_immagine (fallimento di rileva_volti),
+    errore_riconoscimento (fallimento nel confronto col DB per uno dei volti)
+    ed errore_copia (fallimento nella creazione della cartella o nella copia
+    del file) sono per foto.
     """
     conn = connetti(percorso_db)
     riepilogo = {
@@ -120,7 +140,7 @@ def rinomina_da_cartella(
         "ambiguo": 0,
         "sconosciuto": 0,
         "nessun_volto": 0,
-        "scartati_bassa_qualita": 0,
+        "scartati_piccoli_sfondo": 0,
         "errore_lettura_immagine": 0,
         "errore_riconoscimento": 0,
         "errore_copia": 0,
@@ -146,16 +166,22 @@ def rinomina_da_cartella(
                 continue
 
             volti_validi = []
-            for volto in volti:
-                if volto.score < SOGLIA_QUALITA_MINIMA:
-                    riepilogo["scartati_bassa_qualita"] += 1
-                    print(
-                        f"[scartato_bassa_qualita] {foto.name}: "
-                        f"score {volto.score:.2f} sotto soglia {SOGLIA_QUALITA_MINIMA:.2f}",
-                        file=sys.stderr,
-                    )
-                    continue
-                volti_validi.append(volto)
+            if volti:
+                larghezza_immagine, altezza_immagine = Image.open(foto).size
+                area_immagine = larghezza_immagine * altezza_immagine
+                for volto in volti:
+                    x1, y1, x2, y2 = volto.bbox
+                    area_volto = max(0, x2 - x1) * max(0, y2 - y1)
+                    rapporto = area_volto / area_immagine if area_immagine else 0
+                    if rapporto < RAPPORTO_AREA_MINIMO:
+                        riepilogo["scartati_piccoli_sfondo"] += 1
+                        print(
+                            f"[scartato_piccolo_sfondo] {foto.name}: "
+                            f"area {rapporto*100:.2f}% sotto soglia {RAPPORTO_AREA_MINIMO*100:.2f}%",
+                            file=sys.stderr,
+                        )
+                        continue
+                    volti_validi.append(volto)
 
             if not volti_validi:
                 riepilogo["nessun_volto"] += 1
