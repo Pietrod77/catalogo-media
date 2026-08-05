@@ -84,7 +84,7 @@ def _formatta_riepilogo_breve(riepilogo: dict[str, int]) -> str:
         f"{riepilogo['sconosciuto']} sconosciuti",
         f"{riepilogo['nessun_volto']} senza volto a fuoco",
     ]
-    testo = " — ".join(righe)
+    testo = righe[0] + " — " + ", ".join(righe[1:])
 
     errori_totali = (
         riepilogo["errore_lettura_immagine"]

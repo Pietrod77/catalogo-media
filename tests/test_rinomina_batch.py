@@ -521,6 +521,10 @@ def test_formatta_riepilogo_breve_conteggi_base():
         "errore_copia": 0,
     }
     testo = _formatta_riepilogo_breve(riepilogo)
+    assert testo == (
+        "150 foto — 92 nomi trovati (78 certi, 14 da verificare), "
+        "40 sconosciuti, 18 senza volto a fuoco"
+    )
     assert "150 foto" in testo
     assert "92 nomi trovati (78 certi, 14 da verificare)" in testo
     assert "40 sconosciuti" in testo
