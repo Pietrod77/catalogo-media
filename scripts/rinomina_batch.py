@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.matching import calcola_candidati, classifica_match
-from core.volti import rileva_volti
+from core.volti import SOGLIA_QUALITA_MINIMA, rileva_volti
 from db.database import connetti
 
 PERCORSO_DB_DEFAULT = Path(__file__).resolve().parent.parent / "db" / "volti.db"
@@ -98,6 +98,7 @@ def rinomina_da_cartella(
         "ambiguo": 0,
         "sconosciuto": 0,
         "nessun_volto": 0,
+        "scartati_bassa_qualita": 0,
         "errore_lettura_immagine": 0,
         "errore_riconoscimento": 0,
         "errore_copia": 0,
@@ -122,13 +123,25 @@ def rinomina_da_cartella(
                 print(f"[errore_lettura_immagine] {foto.name}: {errore}")
                 continue
 
-            if not volti:
+            volti_validi = []
+            for volto in volti:
+                if volto.score < SOGLIA_QUALITA_MINIMA:
+                    riepilogo["scartati_bassa_qualita"] += 1
+                    print(
+                        f"[scartato_bassa_qualita] {foto.name}: "
+                        f"score {volto.score:.2f} sotto soglia {SOGLIA_QUALITA_MINIMA:.2f}",
+                        file=sys.stderr,
+                    )
+                    continue
+                volti_validi.append(volto)
+
+            if not volti_validi:
                 riepilogo["nessun_volto"] += 1
                 nuovo_nome = f"{foto.stem}_NESSUN_VOLTO{foto.suffix}"
             else:
                 try:
                     segmenti = []
-                    for volto in volti:
+                    for volto in volti_validi:
                         segmento, categoria = _segmento_per_volto(volto, conn)
                         segmenti.append(segmento)
                         riepilogo[categoria] += 1

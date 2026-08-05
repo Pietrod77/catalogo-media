@@ -132,6 +132,59 @@ def test_nessun_volto_rilevato(db_di_prova, tmp_path, monkeypatch):
     assert riepilogo["nessun_volto"] == 1
 
 
+def test_volto_sotto_soglia_qualita_trattato_come_nessun_volto(db_di_prova, tmp_path, monkeypatch):
+    vettore = _vettore_normalizzato(seed=50)
+    conn = connetti(db_di_prova)
+    id_persona = trova_o_crea_persona(conn, "Mario Rossi")
+    salva_embedding(conn, id_persona, vettore, "mario_0.jpg", "batch_iniziale")
+    conn.close()
+
+    volto_sfocato = VoltoRilevato(vettore=vettore, bbox=(10, 10, 50, 50), score=0.2)
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: [volto_sfocato])
+
+    cartella_input = tmp_path / "input"
+    cartella_output = tmp_path / "output"
+    _crea_immagine_prova(cartella_input / "foto_sfocata.jpg")
+
+    riepilogo = rinomina_da_cartella(cartella_input, cartella_output, db_di_prova)
+
+    file_output = list(cartella_output.glob("*.jpg"))
+    assert len(file_output) == 1
+    assert file_output[0].name == "foto_sfocata_NESSUN_VOLTO.jpg"
+    assert riepilogo["nessun_volto"] == 1
+    assert riepilogo["certo"] == 0
+    assert riepilogo["scartati_bassa_qualita"] == 1
+
+
+def test_volto_valido_e_volto_scartato_stessa_foto(db_di_prova, tmp_path, monkeypatch):
+    v1 = _vettore_normalizzato(seed=60)
+    v2 = _vettore_normalizzato(seed=61)
+    conn = connetti(db_di_prova)
+    id_mario = trova_o_crea_persona(conn, "Mario Rossi")
+    salva_embedding(conn, id_mario, v1, "mario_0.jpg", "batch_iniziale")
+    id_anna = trova_o_crea_persona(conn, "Anna Bianchi")
+    salva_embedding(conn, id_anna, v2, "anna_0.jpg", "batch_iniziale")
+    conn.close()
+
+    volto_valido = VoltoRilevato(vettore=v1, bbox=(0, 0, 40, 40), score=0.9)
+    volto_scartato = VoltoRilevato(vettore=v2, bbox=(50, 50, 90, 90), score=0.3)
+    monkeypatch.setattr(
+        "scripts.rinomina_batch.rileva_volti", lambda percorso: [volto_valido, volto_scartato]
+    )
+
+    cartella_input = tmp_path / "input"
+    cartella_output = tmp_path / "output"
+    _crea_immagine_prova(cartella_input / "foto_mista.jpg")
+
+    riepilogo = rinomina_da_cartella(cartella_input, cartella_output, db_di_prova)
+
+    file_output = list(cartella_output.glob("*.jpg"))
+    assert len(file_output) == 1
+    assert file_output[0].name == "foto_mista_Mario_Rossi_100.jpg"
+    assert riepilogo["certo"] == 1
+    assert riepilogo["scartati_bassa_qualita"] == 1
+
+
 def test_due_volti_stessa_foto_segmenti_incatenati(db_di_prova, tmp_path, monkeypatch):
     v1 = _vettore_normalizzato(seed=6)
     v2 = _vettore_normalizzato(seed=7)
