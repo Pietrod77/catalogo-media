@@ -2,6 +2,12 @@
 
 Data: 2026-08-05
 
+## Aggiornamento post-revisione finale (2026-08-05)
+
+Il criterio descritto più sotto (soglia sullo `score` InsightFace, sezione 1) si è rivelato **inefficace**: `SOGLIA_QUALITA_MINIMA` (0.5) coincide col `det_thresh` di default del rilevatore stesso, quindi `rileva_volti()` non può mai restituire un volto sotto quella soglia — il filtro non scartava mai nulla nella pratica. Verificato empiricamente su 62 volti reali (20 foto): lo score non separa volto principale da volto sullo sfondo (un volto sfocato sullo sfondo aveva score 0.79, più alto di alcuni volti principali nitidi).
+
+Sostituito con un criterio sul **rapporto tra area del bounding box del volto e area della foto** (costante `RAPPORTO_AREA_MINIMO = 0.004`, sostituisce `SOGLIA_QUALITA_MINIMA` in questo script): sullo stesso campione, i volti principali occupavano tra lo 0,70% e il 3,25% dell'area della foto, tutti gli altri (sfondo/sfocati) tra lo 0,02% e lo 0,22% — soglia scelta nel salto netto tra i due gruppi. Il contatore diagnostico è stato rinominato da `scartati_bassa_qualita` a `scartati_piccoli_sfondo`. Il resto del design (sezioni 2 e 3, riepilogo breve e routing stdout/stderr) è invariato. La sezione 1 sotto resta come documento storico della decisione originale, poi rivista.
+
 ## Contesto e obiettivo
 
 `scripts/rinomina_batch.py` (già in produzione, usato tramite il droplet macOS "Rinomina Volti.app") funziona ma Pietro ha segnalato due problemi dopo l'uso reale:
