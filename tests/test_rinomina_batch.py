@@ -230,3 +230,26 @@ def test_eccezione_non_valueerror_non_blocca_batch(db_di_prova, tmp_path, monkey
     assert riepilogo["foto_totali"] == 2
     assert (cartella_output / "ok_NESSUN_VOLTO.jpg").exists()
     assert not list(cartella_output.glob("errore*"))
+
+
+def test_eccezione_da_segmento_per_volto_non_blocca_batch(db_di_prova, tmp_path, monkeypatch):
+    """Verifica che eccezioni da _segmento_per_volto (e.g. SQLite error da calcola_candidati) non abortono il batch."""
+
+    def _segmento_per_volto_finto(volto, conn):
+        raise RuntimeError("Errore SQLite simulato da calcola_candidati")
+
+    volto_finto = VoltoRilevato(vettore=_vettore_normalizzato(seed=10), bbox=(10, 10, 50, 50), score=0.9)
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: [volto_finto] if "errore" in str(percorso) else [])
+    monkeypatch.setattr("scripts.rinomina_batch._segmento_per_volto", _segmento_per_volto_finto)
+
+    cartella_input = tmp_path / "input"
+    cartella_output = tmp_path / "output"
+    _crea_immagine_prova(cartella_input / "errore.jpg")
+    _crea_immagine_prova(cartella_input / "ok.jpg")
+
+    riepilogo = rinomina_da_cartella(cartella_input, cartella_output, db_di_prova)
+
+    assert riepilogo["errore_lettura_immagine"] == 1
+    assert riepilogo["foto_totali"] == 2
+    assert (cartella_output / "ok_NESSUN_VOLTO.jpg").exists()
+    assert not list(cartella_output.glob("errore*"))

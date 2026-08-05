@@ -94,12 +94,17 @@ def rinomina_da_cartella(
                 riepilogo["nessun_volto"] += 1
                 nuovo_nome = f"{foto.stem}_NESSUN_VOLTO{foto.suffix}"
             else:
-                segmenti = []
-                for volto in volti:
-                    segmento, categoria = _segmento_per_volto(volto, conn)
-                    segmenti.append(segmento)
-                    riepilogo[categoria] += 1
-                nuovo_nome = f"{foto.stem}_{'_'.join(segmenti)}{foto.suffix}"
+                try:
+                    segmenti = []
+                    for volto in volti:
+                        segmento, categoria = _segmento_per_volto(volto, conn)
+                        segmenti.append(segmento)
+                        riepilogo[categoria] += 1
+                    nuovo_nome = f"{foto.stem}_{'_'.join(segmenti)}{foto.suffix}"
+                except Exception as errore:
+                    riepilogo["errore_lettura_immagine"] += 1
+                    print(f"[errore_lettura_immagine] {foto.name}: {errore}")
+                    continue
 
             try:
                 percorso_relativo = foto.relative_to(cartella_input).parent
