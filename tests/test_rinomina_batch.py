@@ -8,7 +8,7 @@ from PIL import Image
 
 from core.volti import VoltoRilevato
 from db.database import connetti, init_db, salva_embedding, trova_o_crea_persona
-from scripts.rinomina_batch import _sanitizza_nome, main, rinomina_da_cartella
+from scripts.rinomina_batch import _formatta_riepilogo_breve, _sanitizza_nome, main, rinomina_da_cartella
 
 
 def _vettore_normalizzato(seed: int) -> np.ndarray:
@@ -506,3 +506,78 @@ def test_pulizia_non_cancella_output_di_foto_con_stem_simile(tmp_path, monkeypat
     # l'output precedente di IMG_1234_2.jpg non deve essere stato cancellato
     # dalla pulizia dei doppioni fatta durante l'elaborazione di IMG_1234.jpg
     assert (cartella_output / "IMG_1234_2_sconosciuto.jpg").exists()
+
+
+def test_formatta_riepilogo_breve_conteggi_base():
+    riepilogo = {
+        "foto_totali": 150,
+        "certo": 78,
+        "ambiguo": 14,
+        "sconosciuto": 40,
+        "nessun_volto": 18,
+        "scartati_bassa_qualita": 5,
+        "errore_lettura_immagine": 0,
+        "errore_riconoscimento": 0,
+        "errore_copia": 0,
+    }
+    testo = _formatta_riepilogo_breve(riepilogo)
+    assert "150 foto" in testo
+    assert "92 nomi trovati (78 certi, 14 da verificare)" in testo
+    assert "40 sconosciuti" in testo
+    assert "18 senza volto a fuoco" in testo
+    assert "errori" not in testo
+
+
+def test_formatta_riepilogo_breve_include_riga_errori_se_presenti():
+    riepilogo = {
+        "foto_totali": 10,
+        "certo": 5,
+        "ambiguo": 0,
+        "sconosciuto": 3,
+        "nessun_volto": 1,
+        "scartati_bassa_qualita": 0,
+        "errore_lettura_immagine": 1,
+        "errore_riconoscimento": 0,
+        "errore_copia": 0,
+    }
+    testo = _formatta_riepilogo_breve(riepilogo)
+    assert "1 errori (dettagli in terminale)" in testo
+
+
+def test_output_per_foto_va_su_stderr_non_stdout(db_di_prova, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: [])
+    cartella_input = tmp_path / "input"
+    cartella_output = tmp_path / "output"
+    _crea_immagine_prova(cartella_input / "foto_x.jpg")
+
+    rinomina_da_cartella(cartella_input, cartella_output, db_di_prova)
+
+    catturato = capsys.readouterr()
+    assert catturato.out == ""
+    assert "foto_x_NESSUN_VOLTO.jpg" in catturato.err
+
+
+def test_main_stampa_solo_riepilogo_breve_su_stdout(db_di_prova, tmp_path, monkeypatch):
+    monkeypatch.setattr("scripts.rinomina_batch.PERCORSO_DB_DEFAULT", db_di_prova)
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: [])
+
+    cartella_input = tmp_path / "input"
+    cartella_output = tmp_path / "output"
+    _crea_immagine_prova(cartella_input / "foto_y.jpg")
+
+    monkeypatch.setattr(
+        sys, "argv", ["rinomina_batch.py", str(cartella_input), str(cartella_output)]
+    )
+
+    import io
+    import contextlib
+
+    buffer_out = io.StringIO()
+    with contextlib.redirect_stdout(buffer_out):
+        codice_uscita = main()
+
+    assert codice_uscita == 0
+    testo_stdout = buffer_out.getvalue()
+    assert "1 foto" in testo_stdout
+    assert "senza volto a fuoco" in testo_stdout
+    assert "foto_y_NESSUN_VOLTO.jpg" not in testo_stdout

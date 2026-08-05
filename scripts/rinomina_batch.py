@@ -74,6 +74,28 @@ def _tronca_nome_file(stem: str, segmenti: list[str], suffisso: str) -> str:
     return "_".join(pezzi) + suffisso
 
 
+def _formatta_riepilogo_breve(riepilogo: dict[str, int]) -> str:
+    """Costruisce la riga di riepilogo breve mostrata nel dialog del droplet
+    (che cattura solo stdout) invece del dump completo del dizionario."""
+    nomi_trovati = riepilogo["certo"] + riepilogo["ambiguo"]
+    righe = [
+        f"{riepilogo['foto_totali']} foto",
+        f"{nomi_trovati} nomi trovati ({riepilogo['certo']} certi, {riepilogo['ambiguo']} da verificare)",
+        f"{riepilogo['sconosciuto']} sconosciuti",
+        f"{riepilogo['nessun_volto']} senza volto a fuoco",
+    ]
+    testo = " — ".join(righe)
+
+    errori_totali = (
+        riepilogo["errore_lettura_immagine"]
+        + riepilogo["errore_riconoscimento"]
+        + riepilogo["errore_copia"]
+    )
+    if errori_totali > 0:
+        testo += f"\n{errori_totali} errori (dettagli in terminale)"
+    return testo
+
+
 def rinomina_da_cartella(
     cartella_input: Path, cartella_output: Path, percorso_db: Path
 ) -> dict[str, int]:
@@ -116,11 +138,11 @@ def rinomina_da_cartella(
                 volti = rileva_volti(foto)
             except ValueError as errore:
                 riepilogo["errore_lettura_immagine"] += 1
-                print(f"[errore_lettura_immagine] {foto.name}: {errore}")
+                print(f"[errore_lettura_immagine] {foto.name}: {errore}", file=sys.stderr)
                 continue
             except Exception as errore:
                 riepilogo["errore_lettura_immagine"] += 1
-                print(f"[errore_lettura_immagine] {foto.name}: {errore}")
+                print(f"[errore_lettura_immagine] {foto.name}: {errore}", file=sys.stderr)
                 continue
 
             volti_validi = []
@@ -150,7 +172,7 @@ def rinomina_da_cartella(
                         nuovo_nome = _tronca_nome_file(foto.stem, segmenti, foto.suffix)
                 except Exception as errore:
                     riepilogo["errore_riconoscimento"] += 1
-                    print(f"[errore_riconoscimento] {foto.name}: {errore}")
+                    print(f"[errore_riconoscimento] {foto.name}: {errore}", file=sys.stderr)
                     continue
 
             try:
@@ -169,10 +191,10 @@ def rinomina_da_cartella(
                         continue
                     vecchio.unlink()
                 shutil.copy2(foto, percorso_destinazione)
-                print(f"[{nuovo_nome}] <- {foto.name}")
+                print(f"[{nuovo_nome}] <- {foto.name}", file=sys.stderr)
             except Exception as errore:
                 riepilogo["errore_copia"] += 1
-                print(f"[errore_copia] {foto.name}: {errore}")
+                print(f"[errore_copia] {foto.name}: {errore}", file=sys.stderr)
     finally:
         conn.close()
     return riepilogo
@@ -207,9 +229,7 @@ def main() -> int:
 
     riepilogo = rinomina_da_cartella(cartella_input, cartella_output, PERCORSO_DB_DEFAULT)
 
-    print("\n--- Riepilogo rinomina ---")
-    for chiave, valore in riepilogo.items():
-        print(f"{chiave}: {valore}")
+    print(_formatta_riepilogo_breve(riepilogo))
 
     return 0
 
