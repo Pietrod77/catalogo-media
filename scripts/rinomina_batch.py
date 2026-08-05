@@ -13,6 +13,7 @@ tutti i volti rilevati erano troppo piccoli/sullo sfondo (vedi
 RAPPORTO_AREA_MINIMO).
 """
 
+import contextlib
 import shutil
 import sys
 from pathlib import Path
@@ -155,7 +156,12 @@ def rinomina_da_cartella(
         for foto in foto_trovate:
             riepilogo["foto_totali"] += 1
             try:
-                volti = rileva_volti(foto)
+                # InsightFace stampa log di caricamento modello ("find model:",
+                # "Applied providers:", ecc.) direttamente su stdout con print()
+                # — qui li reindirizziamo su stderr per non farli finire nel
+                # dialog del droplet, che cattura solo lo stdout del comando.
+                with contextlib.redirect_stdout(sys.stderr):
+                    volti = rileva_volti(foto)
             except ValueError as errore:
                 riepilogo["errore_lettura_immagine"] += 1
                 print(f"[errore_lettura_immagine] {foto.name}: {errore}", file=sys.stderr)

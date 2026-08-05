@@ -614,6 +614,32 @@ def test_output_per_foto_va_su_stderr_non_stdout(db_di_prova, tmp_path, monkeypa
     assert "foto_x_NESSUN_VOLTO.jpg" in catturato.err
 
 
+def test_rumore_stdout_di_rileva_volti_non_finisce_nel_riepilogo(
+    db_di_prova, tmp_path, monkeypatch, capsys
+):
+    """Regressione: InsightFace stampa log di caricamento modello ("find model:",
+    "Applied providers:") direttamente su stdout con print() durante la prima
+    chiamata a rileva_volti — se non reindirizzati, questi finiscono nel dialog
+    del droplet insieme al riepilogo breve, vanificando lo scopo di quest'ultimo."""
+
+    def _rileva_volti_rumoroso(percorso):
+        print("find model: rumore di libreria")
+        print("Applied providers: rumore di libreria")
+        return []
+
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", _rileva_volti_rumoroso)
+
+    cartella_input = tmp_path / "input"
+    cartella_output = tmp_path / "output"
+    _crea_immagine_prova(cartella_input / "foto_z.jpg")
+
+    rinomina_da_cartella(cartella_input, cartella_output, db_di_prova)
+
+    catturato = capsys.readouterr()
+    assert catturato.out == ""
+    assert "rumore di libreria" in catturato.err
+
+
 def test_main_stampa_solo_riepilogo_breve_su_stdout(db_di_prova, tmp_path, monkeypatch):
     monkeypatch.setattr("scripts.rinomina_batch.PERCORSO_DB_DEFAULT", db_di_prova)
     monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: [])
