@@ -106,6 +106,7 @@ def rinomina_da_cartella(
     foto_trovate = sorted(
         {percorso for pattern in ESTENSIONI for percorso in cartella_input.rglob(pattern)}
     )
+    tutti_gli_stem = {f.stem for f in foto_trovate}
 
     try:
         for foto in foto_trovate:
@@ -145,8 +146,15 @@ def rinomina_da_cartella(
                 cartella_output_foto.mkdir(parents=True, exist_ok=True)
                 percorso_destinazione = cartella_output_foto / nuovo_nome
                 for vecchio in cartella_output_foto.glob(f"{foto.stem}_*{foto.suffix}"):
-                    if vecchio != percorso_destinazione:
-                        vecchio.unlink()
+                    if vecchio == percorso_destinazione:
+                        continue
+                    altri_possibili_proprietari = any(
+                        altro_stem != foto.stem and vecchio.name.startswith(f"{altro_stem}_")
+                        for altro_stem in tutti_gli_stem
+                    )
+                    if altri_possibili_proprietari:
+                        continue
+                    vecchio.unlink()
                 shutil.copy2(foto, percorso_destinazione)
                 print(f"[{nuovo_nome}] <- {foto.name}")
             except Exception as errore:

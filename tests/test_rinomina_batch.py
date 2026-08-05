@@ -377,3 +377,79 @@ def test_rerun_pulisce_file_obsoleti_stessa_foto(tmp_path, monkeypatch):
     file_output = list(cartella_output.glob("foto_multi_*.jpg"))
     assert len(file_output) == 1
     assert file_output[0].name == "foto_multi_Mario_Rossi_100.jpg"
+
+
+def test_pulizia_non_cancella_output_di_foto_con_stem_simile(tmp_path, monkeypatch):
+    """Bug: la pulizia dei doppioni prima di copiare IMG_1234.jpg usava il glob
+    f"{foto.stem}_*{foto.suffix}", che cattura anche l'output di IMG_1234_2.jpg
+    (il cui nome inizia comunque con "IMG_1234_") e lo cancellava per errore,
+    anche se appartiene a una foto sorgente diversa e non correlata.
+
+    In un run senza errori il problema si "autoguarisce" (IMG_1234_2.jpg viene
+    comunque rielaborata più avanti nello stesso run e il suo output ricreato),
+    quindi per dimostrare la perdita di dati permanente qui si simula un
+    errore di copia per IMG_1234_2.jpg nel secondo run: il suo output
+    precedente (valido) deve sopravvivere alla pulizia fatta durante
+    l'elaborazione di IMG_1234.jpg, che la precede in ordine alfabetico."""
+    percorso_db = tmp_path / "volti_test.db"
+    init_db(percorso_db)
+
+    cartella_input = tmp_path / "input"
+    cartella_output = tmp_path / "output"
+    _crea_immagine_prova(cartella_input / "IMG_1234.jpg")
+    _crea_immagine_prova(cartella_input / "IMG_1234_2.jpg")
+
+    # primo run: un volto viene rilevato in entrambe le foto ma il DB è vuoto
+    # -> nessun candidato possibile, quindi entrambe risultano sconosciute
+    # (non "NESSUN_VOLTO", che richiederebbe nessun volto rilevato)
+    volto_sconosciuto_1234 = VoltoRilevato(
+        vettore=_vettore_normalizzato(seed=2900), bbox=(10, 10, 50, 50), score=0.9
+    )
+    volto_sconosciuto_1234_2 = VoltoRilevato(
+        vettore=_vettore_normalizzato(seed=2901), bbox=(10, 10, 50, 50), score=0.9
+    )
+
+    def _rileva_volti_primo_run(percorso):
+        if percorso.name == "IMG_1234.jpg":
+            return [volto_sconosciuto_1234]
+        return [volto_sconosciuto_1234_2]
+
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", _rileva_volti_primo_run)
+    rinomina_da_cartella(cartella_input, cartella_output, percorso_db)
+    assert (cartella_output / "IMG_1234_sconosciuto.jpg").exists()
+    assert (cartella_output / "IMG_1234_2_sconosciuto.jpg").exists()
+
+    # il DB viene aggiornato: ora IMG_1234.jpg ha un match certo
+    vettore = _vettore_normalizzato(seed=3000)
+    conn = connetti(percorso_db)
+    id_persona = trova_o_crea_persona(conn, "Mario Rossi")
+    salva_embedding(conn, id_persona, vettore, "mario_0.jpg", "batch_iniziale")
+    conn.close()
+
+    volto_finto = VoltoRilevato(vettore=vettore, bbox=(10, 10, 50, 50), score=0.9)
+
+    def _rileva_volti_finto(percorso):
+        if percorso.name == "IMG_1234.jpg":
+            return [volto_finto]
+        return []
+
+    real_copy2 = shutil.copy2
+
+    def _copy2_finto(src, dst):
+        # la ricopia di IMG_1234_2.jpg fallisce in questo run: se la pulizia
+        # avesse già cancellato indebitamente il suo output precedente, la
+        # perdita sarebbe permanente e silenziosa
+        if Path(src).name == "IMG_1234_2.jpg":
+            raise RuntimeError("Errore disco simulato")
+        real_copy2(src, dst)
+
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", _rileva_volti_finto)
+    monkeypatch.setattr("scripts.rinomina_batch.shutil.copy2", _copy2_finto)
+
+    riepilogo = rinomina_da_cartella(cartella_input, cartella_output, percorso_db)
+
+    assert riepilogo["errore_copia"] == 1
+    assert (cartella_output / "IMG_1234_Mario_Rossi_100.jpg").exists()
+    # l'output precedente di IMG_1234_2.jpg non deve essere stato cancellato
+    # dalla pulizia dei doppioni fatta durante l'elaborazione di IMG_1234.jpg
+    assert (cartella_output / "IMG_1234_2_sconosciuto.jpg").exists()
