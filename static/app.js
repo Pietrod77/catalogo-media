@@ -140,7 +140,7 @@ function mostraAmbiguo(volto) {
         const voce = document.createElement("div");
         voce.className = "candidato";
         voce.innerHTML = `
-            <img src="/riferimento?path=${encodeURIComponent(candidato.foto_riferimento)}" class="miniatura-riferimento">
+            <img src="/riferimento?path=${encodeURIComponent(candidato.foto_riferimento)}" class="miniatura-riferimento" onerror="this.remove()">
             <span>${formattaNome(candidato.nome)} (${candidato.punteggio.toFixed(3)})</span>
         `;
         voce.addEventListener("click", () => {
