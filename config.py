@@ -26,18 +26,25 @@ def percorso_consentito(percorso: Path, cartelle_consentite: list[Path]) -> bool
     )
 
 
+# Indirizzo Tailscale del NAS dove gira la versione online (vedi anche
+# "Avvia Modelle.command"/"Avvia Personaggi.command", che lo usano per lo
+# stesso motivo con lo stesso valore hardcoded).
+NAS_HOST = "100.125.65.26"
+
 PROFILI: dict[str, dict] = {
     "modelle": {
         "db": RADICE_PROGETTO / "db" / "volti_modelle.db",
         "sessioni": RADICE_PROGETTO / "sessioni" / "modelle",
         "porta": 5001,
         "colore": "#ffe4e1",
+        "nas_url": f"http://{NAS_HOST}:5001",
     },
     "personaggi": {
         "db": PERCORSO_DB_DEFAULT,
         "sessioni": CARTELLA_SESSIONI_DEFAULT,
         "porta": 5002,
         "colore": "#b0e0e6",
+        "nas_url": f"http://{NAS_HOST}:5002",
     },
 }
 

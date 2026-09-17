@@ -8,7 +8,7 @@ from PIL import Image
 
 from app import crea_app
 from core.volti import VoltoRilevato
-from db.database import connetti, trova_o_crea_persona, salva_embedding
+from db.database import connetti, init_db, trova_o_crea_persona, salva_embedding
 
 
 @pytest.fixture
@@ -453,6 +453,81 @@ def test_conferma_con_nas_url_configurato_marca_non_sincronizzato(tmp_path):
     ).fetchone()
     conn.close()
     assert riga[0] == 0
+
+
+def test_conferma_propaga_su_db_secondario_se_configurato(tmp_path):
+    """Una conferma sul profilo Modelle deve finire anche nel database
+    Personaggi, quando quest'ultimo e' configurato come propagazione."""
+    percorso_db_modelle = tmp_path / "volti_modelle.db"
+    percorso_db_personaggi = tmp_path / "volti.db"
+    app_modelle = crea_app(
+        percorso_db=percorso_db_modelle,
+        cartella_sessioni=tmp_path / "sessioni_modelle",
+        percorso_db_propagazione=percorso_db_personaggi,
+    )
+    client_modelle = app_modelle.test_client()
+    vettore = _vettore_normalizzato(seed=70).tolist()
+    screenshot_b64 = base64.b64encode(b"x").decode("ascii")
+
+    client_modelle.post(
+        "/conferma",
+        json={
+            "nome": "Nuova Modella",
+            "vettore": vettore,
+            "screenshot_base64": screenshot_b64,
+            "score": 0.9,
+        },
+    )
+
+    conn_modelle = connetti(percorso_db_modelle)
+    persona_modelle = conn_modelle.execute(
+        "SELECT id FROM persone WHERE nome = ?", ("Nuova Modella",)
+    ).fetchone()
+    conn_modelle.close()
+    assert persona_modelle is not None
+
+    conn_personaggi = connetti(percorso_db_personaggi)
+    persona_personaggi = conn_personaggi.execute(
+        "SELECT id FROM persone WHERE nome = ?", ("Nuova Modella",)
+    ).fetchone()
+    assert persona_personaggi is not None
+    embedding_personaggi = conn_personaggi.execute(
+        "SELECT fonte FROM embedding WHERE person_id = ?", (persona_personaggi[0],)
+    ).fetchone()
+    conn_personaggi.close()
+    assert embedding_personaggi[0] == "conferma_editing"
+
+
+def test_conferma_senza_propagazione_non_tocca_altri_db(tmp_path):
+    """Il profilo Personaggi (senza percorso_db_propagazione) non deve scrivere
+    da nessuna parte oltre al proprio database."""
+    percorso_db_personaggi = tmp_path / "volti.db"
+    percorso_db_modelle = tmp_path / "volti_modelle.db"
+    init_db(percorso_db_modelle)
+    app_personaggi = crea_app(
+        percorso_db=percorso_db_personaggi,
+        cartella_sessioni=tmp_path / "sessioni_personaggi",
+    )
+    client_personaggi = app_personaggi.test_client()
+    vettore = _vettore_normalizzato(seed=71).tolist()
+    screenshot_b64 = base64.b64encode(b"x").decode("ascii")
+
+    client_personaggi.post(
+        "/conferma",
+        json={
+            "nome": "Nuovo Personaggio",
+            "vettore": vettore,
+            "screenshot_base64": screenshot_b64,
+            "score": 0.9,
+        },
+    )
+
+    conn_modelle = connetti(percorso_db_modelle)
+    persona_modelle = conn_modelle.execute(
+        "SELECT id FROM persone WHERE nome = ?", ("Nuovo Personaggio",)
+    ).fetchone()
+    conn_modelle.close()
+    assert persona_modelle is None
 
 
 def test_sync_esporta_ritorna_persone_ed_embedding_nuovi(app, client):

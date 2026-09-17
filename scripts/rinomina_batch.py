@@ -1,16 +1,25 @@
 """Rinomina in batch foto non taggate in base al riconoscimento volti.
 
 Uso:
-    python scripts/rinomina_batch.py <cartella_input> <cartella_output>
+    python scripts/rinomina_batch.py <cartella_input> <cartella_output> [modelle|personaggi]
 
 Scansiona <cartella_input> (e sottocartelle) alla ricerca di JPG/PNG, rileva
-i volti con InsightFace, li confronta col database "personaggi", e copia
-ogni foto in <cartella_output> (stessa struttura di sottocartelle) col nome
-del file originale seguito da un segmento per ogni volto trovato: nome e
-punteggio se il match è certo o ambiguo, "sconosciuto" se nessun candidato
-valido, "NESSUN_VOLTO" se non è stato rilevato alcun volto nella foto o se
-tutti i volti rilevati erano troppo piccoli/sullo sfondo (vedi
-RAPPORTO_AREA_MINIMO).
+i volti con InsightFace, li confronta col database del profilo indicato
+(default "personaggi" se omesso), e copia ogni foto in <cartella_output>
+(stessa struttura di sottocartelle) col nome del file originale seguito da
+un segmento per ogni volto trovato: nome e punteggio se il match è certo o
+ambiguo, "sconosciuto" se nessun candidato valido, "NESSUN_VOLTO" se non è
+stato rilevato alcun volto nella foto o se tutti i volti rilevati erano
+troppo piccoli/sullo sfondo (vedi RAPPORTO_AREA_MINIMO). Per il profilo
+"modelle" si usa una soglia minima piu' severa (SOGLIA_BASSA_MODELLE): non
+c'e' una persona a disambiguare i match incerti come nella UI web, quindi
+sotto quella soglia il volto resta "sconosciuto" invece di "ambiguo".
+
+Prima di elaborare le foto, si sincronizza col sito (NAS) per scaricare i
+nomi confermati li' nel frattempo: cosi' il droplet riconosce anche le
+persone aggiunte dal sito senza dover prima aprire "Avvia Modelle/
+Personaggi.command" a mano. Se il sito non e' raggiungibile si procede
+comunque con i dati locali piu' recenti disponibili.
 """
 
 import contextlib
@@ -22,11 +31,18 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core.matching import calcola_candidati, classifica_match
+from config import PROFILI
+from core.matching import SOGLIA_BASSA, calcola_candidati, classifica_match
+from core.sync import esegui_ciclo_sync
 from core.volti import rileva_volti
 from db.database import connetti
 
 PERCORSO_DB_DEFAULT = Path(__file__).resolve().parent.parent / "db" / "volti.db"
+
+# Il profilo "modelle" non ha una persona che disambigua i match incerti come
+# nella UI web: un match sotto questa soglia (piu' severa della SOGLIA_BASSA
+# generale) resta "sconosciuto" invece di "ambiguo/DA_VERIFICARE".
+SOGLIA_BASSA_MODELLE = 0.5
 
 ESTENSIONI = ("*.jpg", "*.JPG", "*.jpeg", "*.JPEG", "*.png", "*.PNG")
 
@@ -51,12 +67,12 @@ def _sanitizza_nome(nome: str) -> str:
     return nome
 
 
-def _segmento_per_volto(volto, conn) -> tuple[str, str]:
+def _segmento_per_volto(volto, conn, soglia_bassa: float = SOGLIA_BASSA) -> tuple[str, str]:
     """Calcola il segmento di nome file per un singolo volto rilevato.
 
     Ritorna (segmento, categoria) dove categoria è 'certo', 'ambiguo' o 'sconosciuto'."""
     candidati = calcola_candidati(volto.vettore, conn)
-    stato = classifica_match(candidati)
+    stato = classifica_match(candidati, soglia_bassa=soglia_bassa)
     if stato == "sconosciuto":
         return "sconosciuto", "sconosciuto"
     nome_sanificato = _sanitizza_nome(candidati[0].nome)
@@ -117,7 +133,10 @@ def _formatta_riepilogo_breve(riepilogo: dict[str, int]) -> str:
 
 
 def rinomina_da_cartella(
-    cartella_input: Path, cartella_output: Path, percorso_db: Path
+    cartella_input: Path,
+    cartella_output: Path,
+    percorso_db: Path,
+    soglia_bassa: float = SOGLIA_BASSA,
 ) -> dict[str, int]:
     """Elabora tutte le foto JPG/PNG in cartella_input (ricorsivo) e ne copia una
     versione rinominata in cartella_output, rispecchiando la struttura di
@@ -196,7 +215,7 @@ def rinomina_da_cartella(
                 try:
                     segmenti = []
                     for volto in volti_validi:
-                        segmento, categoria = _segmento_per_volto(volto, conn)
+                        segmento, categoria = _segmento_per_volto(volto, conn, soglia_bassa)
                         segmenti.append(segmento)
                         riepilogo[categoria] += 1
                     nuovo_nome = f"{foto.stem}_{'_'.join(segmenti)}{foto.suffix}"
@@ -233,8 +252,11 @@ def rinomina_da_cartella(
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
-        print("Uso: python scripts/rinomina_batch.py <cartella_input> <cartella_output>")
+    if len(sys.argv) not in (3, 4):
+        print(
+            "Uso: python scripts/rinomina_batch.py <cartella_input> <cartella_output> "
+            "[modelle|personaggi]"
+        )
         return 1
 
     cartella_input = Path(sys.argv[1])
@@ -244,11 +266,31 @@ def main() -> int:
         print(f"Cartella non trovata: {cartella_input}")
         return 1
 
-    if not PERCORSO_DB_DEFAULT.is_file():
-        print(f"Database non trovato: {PERCORSO_DB_DEFAULT}")
+    if len(sys.argv) == 4:
+        nome_profilo = sys.argv[3]
+        if nome_profilo not in PROFILI:
+            print(f"Profilo sconosciuto: {nome_profilo!r}. Usa 'modelle' o 'personaggi'.")
+            return 1
+        percorso_db = PROFILI[nome_profilo]["db"]
+    else:
+        nome_profilo = "personaggi"
+        percorso_db = PERCORSO_DB_DEFAULT
+
+    soglia_bassa = SOGLIA_BASSA_MODELLE if nome_profilo == "modelle" else SOGLIA_BASSA
+
+    if not percorso_db.is_file():
+        print(f"Database non trovato: {percorso_db}")
         return 1
 
-    conn = connetti(PERCORSO_DB_DEFAULT)
+    esito_sync = esegui_ciclo_sync(
+        percorso_db, PROFILI[nome_profilo]["sessioni"], PROFILI[nome_profilo]["nas_url"]
+    )
+    if esito_sync["raggiungibile"]:
+        print(f"Sincronizzato con il sito: {esito_sync['ricevuti']} nomi nuovi scaricati.")
+    else:
+        print("Sito non raggiungibile: uso i dati locali piu' recenti disponibili.")
+
+    conn = connetti(percorso_db)
     try:
         (numero_embedding,) = conn.execute("SELECT COUNT(*) FROM embedding").fetchone()
     finally:
@@ -259,7 +301,7 @@ def main() -> int:
             "tutte le foto risulteranno sconosciute."
         )
 
-    riepilogo = rinomina_da_cartella(cartella_input, cartella_output, PERCORSO_DB_DEFAULT)
+    riepilogo = rinomina_da_cartella(cartella_input, cartella_output, percorso_db, soglia_bassa)
 
     print(_formatta_riepilogo_breve(riepilogo))
 

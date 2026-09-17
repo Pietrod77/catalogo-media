@@ -50,9 +50,13 @@ def calcola_candidati(
     return candidati[:top_n]
 
 
-def classifica_match(candidati: list[Candidato]) -> str:
-    """Ritorna 'certo', 'ambiguo' o 'sconosciuto' in base al punteggio del migliore."""
-    if not candidati or candidati[0].punteggio < SOGLIA_BASSA:
+def classifica_match(candidati: list[Candidato], soglia_bassa: float = SOGLIA_BASSA) -> str:
+    """Ritorna 'certo', 'ambiguo' o 'sconosciuto' in base al punteggio del migliore.
+
+    soglia_bassa e' personalizzabile per i chiamanti che vogliono un criterio
+    piu' severo (es. la rinomina in batch, dove non c'e' una persona a
+    disambiguare i match incerti come nella UI web)."""
+    if not candidati or candidati[0].punteggio < soglia_bassa:
         return "sconosciuto"
     if candidati[0].punteggio >= SOGLIA_ALTA:
         return "certo"

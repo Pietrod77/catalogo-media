@@ -6,9 +6,16 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from config import PROFILI
 from core.volti import VoltoRilevato
 from db.database import connetti, init_db, salva_embedding, trova_o_crea_persona
-from scripts.rinomina_batch import _formatta_riepilogo_breve, _sanitizza_nome, main, rinomina_da_cartella
+from scripts.rinomina_batch import (
+    SOGLIA_BASSA_MODELLE,
+    _formatta_riepilogo_breve,
+    _sanitizza_nome,
+    main,
+    rinomina_da_cartella,
+)
 
 
 def _vettore_normalizzato(seed: int) -> np.ndarray:
@@ -115,6 +122,76 @@ def test_volto_sconosciuto(db_di_prova, tmp_path, monkeypatch):
     assert len(file_output) == 1
     assert file_output[0].name == "foto3_sconosciuto.jpg"
     assert riepilogo["sconosciuto"] == 1
+
+
+def test_soglia_bassa_modelle_marca_sconosciuto_match_che_sarebbe_ambiguo(
+    db_di_prova, tmp_path, monkeypatch
+):
+    """Con la soglia piu' severa del profilo modelle (0.5), un match che con la
+    soglia generale (0.30) sarebbe 'ambiguo' deve restare 'sconosciuto': non
+    c'e' una persona a disambiguarlo come nella UI web."""
+    base = _vettore_normalizzato(seed=2)
+    vettore_query = _vettore_con_similarita(base, 0.38, seed=3)
+    conn = connetti(db_di_prova)
+    id_anna = trova_o_crea_persona(conn, "Anna Bianchi")
+    salva_embedding(conn, id_anna, base, "anna_0.jpg", "batch_iniziale")
+    conn.close()
+
+    volto_finto = VoltoRilevato(vettore=vettore_query, bbox=(10, 10, 50, 50), score=0.9)
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: [volto_finto])
+
+    cartella_input = tmp_path / "input"
+    cartella_output = tmp_path / "output"
+    _crea_immagine_prova(cartella_input / "foto2.jpg")
+
+    riepilogo = rinomina_da_cartella(
+        cartella_input, cartella_output, db_di_prova, soglia_bassa=SOGLIA_BASSA_MODELLE
+    )
+
+    file_output = list(cartella_output.glob("*.jpg"))
+    assert len(file_output) == 1
+    assert file_output[0].name == "foto2_sconosciuto.jpg"
+    assert riepilogo["sconosciuto"] == 1
+    assert riepilogo["ambiguo"] == 0
+
+
+def test_main_usa_soglia_modelle_per_profilo_modelle(db_di_prova, tmp_path, monkeypatch):
+    """main() con il profilo 'modelle' deve applicare SOGLIA_BASSA_MODELLE, non
+    la soglia generale (verificato passando lo stesso match 'ambiguo' di sopra)."""
+    base = _vettore_normalizzato(seed=2)
+    vettore_query = _vettore_con_similarita(base, 0.38, seed=3)
+    conn = connetti(db_di_prova)
+    id_anna = trova_o_crea_persona(conn, "Anna Bianchi")
+    salva_embedding(conn, id_anna, base, "anna_0.jpg", "batch_iniziale")
+    conn.close()
+
+    volto_finto = VoltoRilevato(vettore=vettore_query, bbox=(10, 10, 50, 50), score=0.9)
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: [volto_finto])
+    monkeypatch.setattr(
+        "scripts.rinomina_batch.PROFILI",
+        {"modelle": {"db": db_di_prova, "sessioni": tmp_path, "nas_url": "http://invalid.test"}},
+    )
+    monkeypatch.setattr(
+        "scripts.rinomina_batch.esegui_ciclo_sync",
+        lambda *a, **k: {"raggiungibile": False, "inviati": 0, "ricevuti": 0},
+    )
+
+    cartella_input = tmp_path / "input"
+    cartella_output = tmp_path / "output"
+    _crea_immagine_prova(cartella_input / "foto2.jpg")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["rinomina_batch.py", str(cartella_input), str(cartella_output), "modelle"],
+    )
+
+    codice_uscita = main()
+
+    file_output = list(cartella_output.glob("*.jpg"))
+    assert codice_uscita == 0
+    assert len(file_output) == 1
+    assert file_output[0].name == "foto2_sconosciuto.jpg"
 
 
 def test_nessun_volto_rilevato(db_di_prova, tmp_path, monkeypatch):
@@ -356,6 +433,10 @@ def test_main_avvisa_se_db_vuoto_ma_procede(tmp_path, monkeypatch, capsys):
 
     monkeypatch.setattr("scripts.rinomina_batch.PERCORSO_DB_DEFAULT", percorso_db)
     monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: [])
+    monkeypatch.setattr(
+        "scripts.rinomina_batch.esegui_ciclo_sync",
+        lambda *a, **k: {"raggiungibile": False, "inviati": 0, "ricevuti": 0},
+    )
     monkeypatch.setattr(
         sys, "argv", ["rinomina_batch.py", str(cartella_input), str(cartella_output)]
     )
@@ -643,6 +724,10 @@ def test_rumore_stdout_di_rileva_volti_non_finisce_nel_riepilogo(
 def test_main_stampa_solo_riepilogo_breve_su_stdout(db_di_prova, tmp_path, monkeypatch):
     monkeypatch.setattr("scripts.rinomina_batch.PERCORSO_DB_DEFAULT", db_di_prova)
     monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: [])
+    monkeypatch.setattr(
+        "scripts.rinomina_batch.esegui_ciclo_sync",
+        lambda *a, **k: {"raggiungibile": False, "inviati": 0, "ricevuti": 0},
+    )
 
     cartella_input = tmp_path / "input"
     cartella_output = tmp_path / "output"
@@ -664,3 +749,69 @@ def test_main_stampa_solo_riepilogo_breve_su_stdout(db_di_prova, tmp_path, monke
     assert "1 foto" in testo_stdout
     assert "senza volto a fuoco" in testo_stdout
     assert "foto_y_NESSUN_VOLTO.jpg" not in testo_stdout
+
+
+def test_main_sincronizza_col_sito_prima_di_elaborare(db_di_prova, tmp_path, monkeypatch):
+    """main() deve chiamare esegui_ciclo_sync sul db/sessioni/nas_url del profilo
+    prima di elaborare le foto, cosi' il droplet vede anche i nomi confermati sul
+    sito nel frattempo, e deve segnalarlo nel riepilogo mostrato nel dialog."""
+    chiamate = []
+
+    def _sync_finto(percorso_db, cartella_sessioni, nas_url):
+        chiamate.append((percorso_db, cartella_sessioni, nas_url))
+        return {"raggiungibile": True, "inviati": 0, "ricevuti": 3}
+
+    monkeypatch.setattr("scripts.rinomina_batch.PERCORSO_DB_DEFAULT", db_di_prova)
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: [])
+    monkeypatch.setattr("scripts.rinomina_batch.esegui_ciclo_sync", _sync_finto)
+
+    cartella_input = tmp_path / "input"
+    cartella_output = tmp_path / "output"
+    _crea_immagine_prova(cartella_input / "foto.jpg")
+
+    monkeypatch.setattr(
+        sys, "argv", ["rinomina_batch.py", str(cartella_input), str(cartella_output)]
+    )
+
+    import io
+    import contextlib
+
+    buffer_out = io.StringIO()
+    with contextlib.redirect_stdout(buffer_out):
+        codice_uscita = main()
+
+    assert codice_uscita == 0
+    assert len(chiamate) == 1
+    percorso_db_usato, cartella_sessioni_usata, nas_url_usato = chiamate[0]
+    assert percorso_db_usato == db_di_prova
+    assert cartella_sessioni_usata == PROFILI["personaggi"]["sessioni"]
+    assert nas_url_usato == PROFILI["personaggi"]["nas_url"]
+    assert "3 nomi nuovi scaricati" in buffer_out.getvalue()
+
+
+def test_main_avvisa_se_sito_non_raggiungibile_ma_procede(db_di_prova, tmp_path, monkeypatch):
+    monkeypatch.setattr("scripts.rinomina_batch.PERCORSO_DB_DEFAULT", db_di_prova)
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: [])
+    monkeypatch.setattr(
+        "scripts.rinomina_batch.esegui_ciclo_sync",
+        lambda *a, **k: {"raggiungibile": False, "inviati": 0, "ricevuti": 0},
+    )
+
+    cartella_input = tmp_path / "input"
+    cartella_output = tmp_path / "output"
+    _crea_immagine_prova(cartella_input / "foto.jpg")
+
+    monkeypatch.setattr(
+        sys, "argv", ["rinomina_batch.py", str(cartella_input), str(cartella_output)]
+    )
+
+    import io
+    import contextlib
+
+    buffer_out = io.StringIO()
+    with contextlib.redirect_stdout(buffer_out):
+        codice_uscita = main()
+
+    assert codice_uscita == 0
+    assert "Sito non raggiungibile" in buffer_out.getvalue()
+    assert (cartella_output / "foto_NESSUN_VOLTO.jpg").exists()

@@ -19,6 +19,7 @@ from config import (
     HOST,
     NAS_URL,
     PERCORSO_DB_DEFAULT,
+    PROFILI,
     percorso_consentito,
     risolvi_profilo,
 )
@@ -41,23 +42,39 @@ def crea_app(
     colore_sfondo: str = "#ffffff",
     nome_profilo: str = "",
     nas_url: str | None = None,
+    percorso_db_propagazione: Path | None = None,
+    cartelle_extra_riferimento: list[Path] | None = None,
 ) -> Flask:
     """Crea e configura l'app Flask. percorso_db e cartella_sessioni sono
     parametrizzabili per permettere ai test di usare un DB e una cartella
     temporanei, isolati dai dati reali. nas_url, se impostato, indica che
     questa istanza e' un fallback locale: le conferme fatte qui partono
-    come non sincronizzate, in attesa che il worker le invii al NAS."""
+    come non sincronizzate, in attesa che il worker le invii al NAS.
+    percorso_db_propagazione, se impostato, indica un secondo database su cui
+    replicare ogni nuova conferma fatta qui (usato per il profilo Modelle, le
+    cui persone confermate finiscono anche nel database Personaggi — non il
+    contrario). cartelle_extra_riferimento aggiunge cartelle da cui servire
+    le miniature di riferimento in /riferimento, oltre alla propria
+    CARTELLA_SESSIONI (serve al profilo Personaggi per poter mostrare le
+    miniature delle persone propagate dal profilo Modelle, i cui screenshot
+    vivono nella cartella sessioni di Modelle)."""
     app = Flask(__name__)
     app.config["PERCORSO_DB"] = Path(percorso_db)
     app.config["CARTELLA_SESSIONI"] = Path(cartella_sessioni)
     app.config["CARTELLE_CONSENTITE_RIFERIMENTI"] = [
         app.config["CARTELLA_SESSIONI"],
         *CARTELLE_ARCHIVIO_EXTRA,
+        *(cartelle_extra_riferimento or []),
     ]
     app.config["COLORE_SFONDO"] = colore_sfondo
     app.config["NOME_PROFILO"] = nome_profilo
     app.config["NAS_URL"] = nas_url
+    app.config["PERCORSO_DB_PROPAGAZIONE"] = (
+        Path(percorso_db_propagazione) if percorso_db_propagazione else None
+    )
     init_db(app.config["PERCORSO_DB"])
+    if app.config["PERCORSO_DB_PROPAGAZIONE"]:
+        init_db(app.config["PERCORSO_DB_PROPAGAZIONE"])
 
     @app.get("/")
     def index():
@@ -181,6 +198,20 @@ def crea_app(
         )
         conn.close()
 
+        percorso_db_propagazione = app.config["PERCORSO_DB_PROPAGAZIONE"]
+        if percorso_db_propagazione:
+            conn_propagazione = connetti(percorso_db_propagazione)
+            person_id_propagazione = trova_o_crea_persona(conn_propagazione, nome)
+            salva_embedding(
+                conn_propagazione,
+                person_id_propagazione,
+                vettore,
+                str(percorso_screenshot),
+                "conferma_editing",
+                sincronizzato=app.config["NAS_URL"] is None,
+            )
+            conn_propagazione.close()
+
         return jsonify(ok=True)
 
     @app.get("/riferimento")
@@ -242,12 +273,23 @@ if __name__ == "__main__":
         print(errore)
         sys.exit(1)
 
+    # Le persone confermate su Modelle finiscono anche nel database Personaggi
+    # (non il contrario): Personaggi deve quindi poter servire come miniature
+    # di riferimento anche gli screenshot salvati nella cartella sessioni di
+    # Modelle.
+    percorso_db_propagazione = PROFILI["personaggi"]["db"] if sys.argv[1] == "modelle" else None
+    cartelle_extra_riferimento = (
+        [PROFILI["modelle"]["sessioni"]] if sys.argv[1] == "personaggi" else None
+    )
+
     app = crea_app(
         percorso_db=profilo["db"],
         cartella_sessioni=profilo["sessioni"],
         colore_sfondo=profilo["colore"],
         nome_profilo=sys.argv[1],
         nas_url=NAS_URL,
+        percorso_db_propagazione=percorso_db_propagazione,
+        cartelle_extra_riferimento=cartelle_extra_riferimento,
     )
     if NAS_URL:
         avvia_worker_sync(profilo["db"], profilo["sessioni"], NAS_URL)
