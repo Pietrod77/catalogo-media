@@ -11,6 +11,7 @@ from core.volti import VoltoRilevato
 from db.database import connetti, init_db, salva_embedding, trova_o_crea_persona
 from scripts.rinomina_batch import (
     SOGLIA_BASSA_MODELLE,
+    _formatta_nome_modella,
     _formatta_riepilogo_breve,
     _sanitizza_nome,
     main,
@@ -191,7 +192,8 @@ def test_main_usa_soglia_modelle_per_profilo_modelle(db_di_prova, tmp_path, monk
     file_output = list(cartella_output.glob("*.jpg"))
     assert codice_uscita == 0
     assert len(file_output) == 1
-    assert file_output[0].name == "foto2_sconosciuto.jpg"
+    # formato modelle: nessun nome trovato -> nome file originale invariato
+    assert file_output[0].name == "foto2.jpg"
 
 
 def test_nessun_volto_rilevato(db_di_prova, tmp_path, monkeypatch):
@@ -815,3 +817,106 @@ def test_main_avvisa_se_sito_non_raggiungibile_ma_procede(db_di_prova, tmp_path,
     assert codice_uscita == 0
     assert "Sito non raggiungibile" in buffer_out.getvalue()
     assert (cartella_output / "foto_NESSUN_VOLTO.jpg").exists()
+
+
+@pytest.mark.parametrize(
+    "nome, atteso",
+    [
+        ("Mario Rossi", "Mario Rossi"),
+        ("IDA HEINER", "Ida Heiner"),
+        ("Mila van Eeten", "Mila Van Eeten"),
+        ("tina_kunakey-di  vita", "Tina Kunakey Di Vita"),
+        ("carmen dell'orefice", "Carmen Dell'Orefice"),
+        ("América González", "América González"),
+        ("Kristen McMenamy", "Kristen McMenamy"),
+    ],
+)
+def test_formatta_nome_modella(nome, atteso):
+    assert _formatta_nome_modella(nome) == atteso
+
+
+def _prepara_foto_modelle(db_di_prova, tmp_path, monkeypatch, nomi_db, volti):
+    conn = connetti(db_di_prova)
+    for nome, vettore in nomi_db:
+        id_persona = trova_o_crea_persona(conn, nome)
+        salva_embedding(conn, id_persona, vettore, f"{nome}_0.jpg", "batch_iniziale")
+    conn.close()
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: volti)
+    cartella_input = tmp_path / "input"
+    _crea_immagine_prova(cartella_input / "IMG_0001.jpg")
+    return cartella_input, tmp_path / "output"
+
+
+def test_formato_modelle_nome_con_spazi_e_maiuscole(db_di_prova, tmp_path, monkeypatch):
+    vettore = _vettore_normalizzato(seed=4000)
+    volto = VoltoRilevato(vettore=vettore, bbox=(10, 10, 50, 50), score=0.9)
+    cartella_input, cartella_output = _prepara_foto_modelle(
+        db_di_prova, tmp_path, monkeypatch, [("mila van_eeten", vettore)], [volto]
+    )
+
+    rinomina_da_cartella(
+        cartella_input, cartella_output, db_di_prova,
+        soglia_bassa=SOGLIA_BASSA_MODELLE, formato_modelle=True,
+    )
+
+    assert [f.name for f in cartella_output.glob("*.jpg")] == ["IMG_0001 Mila Van Eeten 100.jpg"]
+
+
+def test_formato_modelle_nessun_volto_lascia_nome_originale(db_di_prova, tmp_path, monkeypatch):
+    cartella_input, cartella_output = _prepara_foto_modelle(
+        db_di_prova, tmp_path, monkeypatch, [], []
+    )
+
+    riepilogo = rinomina_da_cartella(
+        cartella_input, cartella_output, db_di_prova,
+        soglia_bassa=SOGLIA_BASSA_MODELLE, formato_modelle=True,
+    )
+
+    assert [f.name for f in cartella_output.glob("*.jpg")] == ["IMG_0001.jpg"]
+    assert riepilogo["nessun_volto"] == 1
+
+
+def test_formato_modelle_sconosciuto_non_scrive_nulla(db_di_prova, tmp_path, monkeypatch):
+    """Un volto noto e uno sconosciuto: nel nome finisce solo quello noto."""
+    vettore_noto = _vettore_normalizzato(seed=4100)
+    base_estranea = _vettore_normalizzato(seed=4102)
+    volti = [
+        VoltoRilevato(vettore=vettore_noto, bbox=(10, 10, 50, 50), score=0.9),
+        VoltoRilevato(
+            vettore=_vettore_con_similarita(base_estranea, 0.1, seed=4101),
+            bbox=(50, 50, 90, 90),
+            score=0.9,
+        ),
+    ]
+    cartella_input, cartella_output = _prepara_foto_modelle(
+        db_di_prova, tmp_path, monkeypatch,
+        [("BELLA HADID", vettore_noto), ("Altra Persona", base_estranea)], volti,
+    )
+
+    riepilogo = rinomina_da_cartella(
+        cartella_input, cartella_output, db_di_prova,
+        soglia_bassa=SOGLIA_BASSA_MODELLE, formato_modelle=True,
+    )
+
+    assert [f.name for f in cartella_output.glob("*.jpg")] == ["IMG_0001 Bella Hadid 100.jpg"]
+    assert riepilogo["certo"] == 1
+    assert riepilogo["sconosciuto"] == 1
+
+
+def test_formato_modelle_rerun_sostituisce_output_precedenti(db_di_prova, tmp_path, monkeypatch):
+    """Rieseguendo su una cartella di output che contiene gia' output vecchi
+    (formato underscore o copia col nome originale) resta un solo file."""
+    vettore = _vettore_normalizzato(seed=4200)
+    volto = VoltoRilevato(vettore=vettore, bbox=(10, 10, 50, 50), score=0.9)
+    cartella_input, cartella_output = _prepara_foto_modelle(
+        db_di_prova, tmp_path, monkeypatch, [("Anok Yai", vettore)], [volto]
+    )
+    _crea_immagine_prova(cartella_output / "IMG_0001_sconosciuto.jpg")
+    _crea_immagine_prova(cartella_output / "IMG_0001.jpg")
+
+    rinomina_da_cartella(
+        cartella_input, cartella_output, db_di_prova,
+        soglia_bassa=SOGLIA_BASSA_MODELLE, formato_modelle=True,
+    )
+
+    assert [f.name for f in cartella_output.glob("*.jpg")] == ["IMG_0001 Anok Yai 100.jpg"]

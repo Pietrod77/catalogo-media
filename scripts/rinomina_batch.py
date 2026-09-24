@@ -15,6 +15,12 @@ troppo piccoli/sullo sfondo (vedi RAPPORTO_AREA_MINIMO). Per il profilo
 c'e' una persona a disambiguare i match incerti come nella UI web, quindi
 sotto quella soglia il volto resta "sconosciuto" invece di "ambiguo".
 
+Sempre per il profilo "modelle" il nome file e' "pulito" (vedi
+formato_modelle): i segmenti sono separati da spazi, i nomi hanno sempre
+l'iniziale maiuscola ("Mila van Eeten" -> "Mila Van Eeten") e i volti
+sconosciuti/assenti non aggiungono nulla, quindi una foto senza nessun nome
+riconosciuto mantiene il nome originale.
+
 Prima di elaborare le foto, si sincronizza col sito (NAS) per scaricare i
 nomi confermati li' nel frattempo: cosi' il droplet riconosce anche le
 persone aggiunte dal sito senza dover prima aprire "Avvia Modelle/
@@ -23,6 +29,7 @@ comunque con i dati locali piu' recenti disponibili.
 """
 
 import contextlib
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -67,39 +74,78 @@ def _sanitizza_nome(nome: str) -> str:
     return nome
 
 
-def _segmento_per_volto(volto, conn, soglia_bassa: float = SOGLIA_BASSA) -> tuple[str, str]:
+def _formatta_nome_modella(nome: str) -> str:
+    """Normalizza un nome per il formato "modelle": parole separate da un solo
+    spazio (trattini/underscore compresi) e sempre con iniziale maiuscola,
+    anche dopo un apostrofo ("IDA HEINER" -> "Ida Heiner",
+    "carmen dell'orefice" -> "Carmen Dell'Orefice"). Le parole tutte maiuscole
+    vengono riportate in minuscolo, le altre mantengono le maiuscole interne
+    ("McMenamy" resta "McMenamy")."""
+    parole = [p for p in re.split(r"[\s_\-/\\:]+", nome) if p]
+    return " ".join(
+        re.sub(
+            r"(^|')(\w)",
+            lambda m: m.group(1) + m.group(2).upper(),
+            parola.lower() if parola.isupper() else parola,
+        )
+        for parola in parole
+    )
+
+
+def _segmento_per_volto(
+    volto, conn, soglia_bassa: float = SOGLIA_BASSA, formato_modelle: bool = False
+) -> tuple[str | None, str]:
     """Calcola il segmento di nome file per un singolo volto rilevato.
 
-    Ritorna (segmento, categoria) dove categoria è 'certo', 'ambiguo' o 'sconosciuto'."""
+    Ritorna (segmento, categoria) dove categoria è 'certo', 'ambiguo' o 'sconosciuto'.
+    Con formato_modelle un volto sconosciuto non produce alcun segmento (None)."""
     candidati = calcola_candidati(volto.vettore, conn)
     stato = classifica_match(candidati, soglia_bassa=soglia_bassa)
     if stato == "sconosciuto":
-        return "sconosciuto", "sconosciuto"
-    nome_sanificato = _sanitizza_nome(candidati[0].nome)
+        return (None if formato_modelle else "sconosciuto"), "sconosciuto"
     punteggio = round(candidati[0].punteggio * 100)
+    if formato_modelle:
+        nome = _formatta_nome_modella(candidati[0].nome)
+        if stato == "ambiguo":
+            return f"{nome} {punteggio} DA VERIFICARE", "ambiguo"
+        return f"{nome} {punteggio}", "certo"
+    nome_sanificato = _sanitizza_nome(candidati[0].nome)
     if stato == "ambiguo":
         return f"{nome_sanificato}_{punteggio}_DA_VERIFICARE", "ambiguo"
     return f"{nome_sanificato}_{punteggio}", "certo"
 
 
-def _tronca_nome_file(stem: str, segmenti: list[str], suffisso: str) -> str:
+def _tronca_nome_file(
+    stem: str, segmenti: list[str], suffisso: str, separatore: str = "_"
+) -> str:
     """Costruisce il nome file tenendo solo i primi segmenti che stanno nel
-    budget LIMITE_BYTE_NOME_FILE, aggiungendo un marcatore _ALTRI_<N> per i
+    budget LIMITE_BYTE_NOME_FILE, aggiungendo un marcatore ALTRI<sep><N> per i
     segmenti omessi. Usata quando il nome completo (foto con molti volti
     rilevati) supererebbe il limite di lunghezza del filesystem."""
     tenuti: list[str] = []
     for indice in range(len(segmenti)):
         candidati = segmenti[: indice + 1]
         omessi = len(segmenti) - len(candidati)
-        pezzi = [stem] + candidati + ([f"ALTRI_{omessi}"] if omessi > 0 else [])
-        nome_prova = "_".join(pezzi) + suffisso
+        pezzi = [stem] + candidati + ([f"ALTRI{separatore}{omessi}"] if omessi > 0 else [])
+        nome_prova = separatore.join(pezzi) + suffisso
         if len(nome_prova.encode("utf-8")) > LIMITE_BYTE_NOME_FILE:
             break
         tenuti = candidati
 
     omessi = len(segmenti) - len(tenuti)
-    pezzi = [stem] + tenuti + ([f"ALTRI_{omessi}"] if omessi > 0 else [])
-    return "_".join(pezzi) + suffisso
+    pezzi = [stem] + tenuti + ([f"ALTRI{separatore}{omessi}"] if omessi > 0 else [])
+    return separatore.join(pezzi) + suffisso
+
+
+def _puo_appartenere_a(nome_file: Path, stem: str) -> bool:
+    """True se nome_file puo' essere l'output di una foto sorgente con questo
+    stem: copia col nome originale, oppure stem seguito da "_" (formato
+    personaggi) o da " " (formato modelle)."""
+    return (
+        nome_file.stem == stem
+        or nome_file.name.startswith(f"{stem}_")
+        or nome_file.name.startswith(f"{stem} ")
+    )
 
 
 def _pluralizza(numero: int, singolare: str, plurale: str) -> str:
@@ -137,10 +183,14 @@ def rinomina_da_cartella(
     cartella_output: Path,
     percorso_db: Path,
     soglia_bassa: float = SOGLIA_BASSA,
+    formato_modelle: bool = False,
 ) -> dict[str, int]:
     """Elabora tutte le foto JPG/PNG in cartella_input (ricorsivo) e ne copia una
     versione rinominata in cartella_output, rispecchiando la struttura di
     sottocartelle dell'input. Gli originali non vengono mai modificati.
+
+    Con formato_modelle i nomi trovati sono separati da spazi e i volti
+    sconosciuti/assenti non aggiungono nulla al nome file.
 
     Ritorna un riepilogo: {'foto_totali': N, 'certo': N, 'ambiguo': N,
     'sconosciuto': N, 'nessun_volto': N, 'scartati_piccoli_sfondo': N,
@@ -208,19 +258,28 @@ def rinomina_da_cartella(
                         continue
                     volti_validi.append(volto)
 
+            separatore = " " if formato_modelle else "_"
             if not volti_validi:
                 riepilogo["nessun_volto"] += 1
-                nuovo_nome = f"{foto.stem}_NESSUN_VOLTO{foto.suffix}"
+                if formato_modelle:
+                    nuovo_nome = foto.name
+                else:
+                    nuovo_nome = f"{foto.stem}_NESSUN_VOLTO{foto.suffix}"
             else:
                 try:
                     segmenti = []
                     for volto in volti_validi:
-                        segmento, categoria = _segmento_per_volto(volto, conn, soglia_bassa)
-                        segmenti.append(segmento)
+                        segmento, categoria = _segmento_per_volto(
+                            volto, conn, soglia_bassa, formato_modelle
+                        )
+                        if segmento is not None:
+                            segmenti.append(segmento)
                         riepilogo[categoria] += 1
-                    nuovo_nome = f"{foto.stem}_{'_'.join(segmenti)}{foto.suffix}"
+                    nuovo_nome = separatore.join([foto.stem] + segmenti) + foto.suffix
                     if len(nuovo_nome.encode("utf-8")) > LIMITE_BYTE_NOME_FILE:
-                        nuovo_nome = _tronca_nome_file(foto.stem, segmenti, foto.suffix)
+                        nuovo_nome = _tronca_nome_file(
+                            foto.stem, segmenti, foto.suffix, separatore
+                        )
                 except Exception as errore:
                     riepilogo["errore_riconoscimento"] += 1
                     print(f"[errore_riconoscimento] {foto.name}: {errore}", file=sys.stderr)
@@ -231,11 +290,16 @@ def rinomina_da_cartella(
                 cartella_output_foto = cartella_output / percorso_relativo
                 cartella_output_foto.mkdir(parents=True, exist_ok=True)
                 percorso_destinazione = cartella_output_foto / nuovo_nome
-                for vecchio in cartella_output_foto.glob(f"{foto.stem}_*{foto.suffix}"):
+                # pulisce gli output precedenti della stessa foto in entrambi i
+                # formati (personaggi "stem_..." e modelle "stem ..."/"stem.ext")
+                vecchi = set(cartella_output_foto.glob(f"{foto.stem}_*{foto.suffix}"))
+                vecchi |= set(cartella_output_foto.glob(f"{foto.stem} *{foto.suffix}"))
+                vecchi |= set(cartella_output_foto.glob(f"{foto.stem}{foto.suffix}"))
+                for vecchio in sorted(vecchi):
                     if vecchio == percorso_destinazione:
                         continue
                     altri_possibili_proprietari = any(
-                        altro_stem != foto.stem and vecchio.name.startswith(f"{altro_stem}_")
+                        altro_stem != foto.stem and _puo_appartenere_a(vecchio, altro_stem)
                         for altro_stem in tutti_gli_stem
                     )
                     if altri_possibili_proprietari:
@@ -301,7 +365,13 @@ def main() -> int:
             "tutte le foto risulteranno sconosciute."
         )
 
-    riepilogo = rinomina_da_cartella(cartella_input, cartella_output, percorso_db, soglia_bassa)
+    riepilogo = rinomina_da_cartella(
+        cartella_input,
+        cartella_output,
+        percorso_db,
+        soglia_bassa,
+        formato_modelle=nome_profilo == "modelle",
+    )
 
     print(_formatta_riepilogo_breve(riepilogo))
 
