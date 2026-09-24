@@ -138,6 +138,7 @@ def crea_app(
                                 "nome": c.nome,
                                 "punteggio": c.punteggio,
                                 "foto_riferimento": c.foto_riferimento,
+                                "foto_riferimenti": c.foto_riferimenti,
                             }
                             for c in candidati
                         ],

@@ -119,6 +119,7 @@ def test_analizza_un_volto_certo(app, client, tmp_path, monkeypatch):
     volto = dati["volti"][0]
     assert volto["stato"] == "certo"
     assert volto["candidati"][0]["nome"] == "Mario Rossi"
+    assert volto["candidati"][0]["foto_riferimenti"] == ["mario_0.jpg", "mario_1.jpg", "mario_2.jpg"]
     assert len(volto["vettore"]) == 512
 
 

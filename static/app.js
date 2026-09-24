@@ -109,11 +109,23 @@ function mostraRisultatoVolto(volto) {
     }
 }
 
+// Miniature di tutte le foto in memoria per un candidato, dalla piu' simile.
+// loading="lazy": il browser le scarica solo quando entrano nella vista.
+// onerror: le foto di riferimento che non esistono piu' spariscono.
+function htmlMiniature(candidato) {
+    const foto = candidato.foto_riferimenti || [candidato.foto_riferimento];
+    const immagini = foto
+        .map((percorso) => `<img src="/riferimento?path=${encodeURIComponent(percorso)}" class="miniatura-riferimento" loading="lazy" onerror="this.remove()">`)
+        .join("");
+    return `<div class="miniature-riferimento">${immagini}</div>`;
+}
+
 function mostraCerto(volto) {
     const candidato = volto.candidati[0];
     const blocco = document.createElement("div");
     blocco.innerHTML = `
         <p>${formattaNome(candidato.nome)} (${candidato.punteggio.toFixed(3)})</p>
+        ${htmlMiniature(candidato)}
         <button id="btn-conferma">Conferma</button>
         <a href="#" id="link-correggi">non e' lui, correggi</a>
     `;
@@ -140,8 +152,8 @@ function mostraAmbiguo(volto) {
         const voce = document.createElement("div");
         voce.className = "candidato";
         voce.innerHTML = `
-            <img src="/riferimento?path=${encodeURIComponent(candidato.foto_riferimento)}" class="miniatura-riferimento" onerror="this.remove()">
             <span>${formattaNome(candidato.nome)} (${candidato.punteggio.toFixed(3)})</span>
+            ${htmlMiniature(candidato)}
         `;
         voce.addEventListener("click", () => {
             // Guard against double-click: disable all candidati

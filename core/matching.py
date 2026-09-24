@@ -1,7 +1,7 @@
 """Confronto di un embedding facciale contro il database, per proporre un nome."""
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -14,6 +14,9 @@ class Candidato:
     nome: str
     punteggio: float
     foto_riferimento: str
+    # tutte le foto di riferimento della persona, dalla piu' simile alla meno
+    # simile al volto cercato (senza doppioni); la prima e' foto_riferimento
+    foto_riferimenti: list[str] = field(default_factory=list)
 
 
 def calcola_candidati(
@@ -43,8 +46,15 @@ def calcola_candidati(
         coppie.sort(key=lambda c: c[0], reverse=True)
         migliori = coppie[:3]
         punteggio = sum(s for s, _ in migliori) / len(migliori)
-        foto_riferimento = migliori[0][1]
-        candidati.append(Candidato(nome=nome, punteggio=punteggio, foto_riferimento=foto_riferimento))
+        foto_riferimenti = list(dict.fromkeys(foto for _, foto in coppie))
+        candidati.append(
+            Candidato(
+                nome=nome,
+                punteggio=punteggio,
+                foto_riferimento=foto_riferimenti[0],
+                foto_riferimenti=foto_riferimenti,
+            )
+        )
 
     candidati.sort(key=lambda c: c.punteggio, reverse=True)
     return candidati[:top_n]

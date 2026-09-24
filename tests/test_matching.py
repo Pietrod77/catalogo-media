@@ -116,3 +116,21 @@ def test_classifica_match_sconosciuto_sotto_soglia_bassa():
 
 def test_classifica_match_sconosciuto_se_nessun_candidato():
     assert classifica_match([]) == "sconosciuto"
+
+
+def test_calcola_candidati_ritorna_tutte_le_foto_ordinate_per_similarita(tmp_path):
+    percorso_db = tmp_path / "volti.db"
+    init_db(percorso_db)
+    conn = connetti(percorso_db)
+    base = _vettore_normalizzato(seed=10)
+    lontano = _vettore_normalizzato(seed=11)
+    id_anna = trova_o_crea_persona(conn, "Anna Bianchi")
+    salva_embedding(conn, id_anna, lontano, "anna_lontana.jpg", "batch_iniziale")
+    salva_embedding(conn, id_anna, base, "anna_vicina.jpg", "batch_iniziale")
+    salva_embedding(conn, id_anna, base, "anna_vicina.jpg", "batch_iniziale")  # doppione
+
+    candidati = calcola_candidati(base, conn)
+    conn.close()
+
+    assert candidati[0].foto_riferimenti == ["anna_vicina.jpg", "anna_lontana.jpg"]
+    assert candidati[0].foto_riferimento == "anna_vicina.jpg"
