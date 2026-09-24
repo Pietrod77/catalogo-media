@@ -15,13 +15,13 @@ troppo piccoli/sullo sfondo (vedi RAPPORTO_AREA_MINIMO). Per il profilo
 c'e' una persona a disambiguare i match incerti come nella UI web, quindi
 sotto quella soglia il volto resta "sconosciuto" invece di "ambiguo".
 
-Sempre per il profilo "modelle" il nome file e' "pulito" (vedi
-formato_modelle): i segmenti sono separati da spazi, i nomi hanno sempre
-l'iniziale maiuscola ("Mila van Eeten" -> "Mila Van Eeten") e i volti
-sconosciuti/assenti non aggiungono nulla, quindi una foto senza nessun nome
-riconosciuto mantiene il nome originale. Inoltre, nelle foto orizzontali
-del profilo "modelle" si considerano solo i volti al centro nella parte alta
-(vedi ZONA_ORIZZONTALI): la modella e' li', gli altri volti sono di contorno.
+Da riga di comando (cioe' dai droplet, per entrambi i profili) il nome file
+e' "pulito" (vedi nomi_puliti): i segmenti sono separati da spazi, i nomi
+hanno sempre l'iniziale maiuscola ("Mila van Eeten" -> "Mila Van Eeten") e
+i volti sconosciuti/assenti non aggiungono nulla, quindi una foto senza
+nessun nome riconosciuto mantiene il nome originale. Inoltre, nelle foto
+orizzontali si considerano solo i volti al centro nella parte alta (vedi
+ZONA_ORIZZONTALI): il soggetto e' li', gli altri volti sono di contorno.
 
 Prima di elaborare le foto, si sincronizza col sito (NAS) per scaricare i
 nomi confermati li' nel frattempo: cosi' il droplet riconosce anche le
@@ -67,7 +67,7 @@ LIMITE_BYTE_NOME_FILE = 200
 # 0,02% e lo 0,22% — soglia scelta nel mezzo di quel salto.
 RAPPORTO_AREA_MINIMO = 0.004
 
-# Nelle foto orizzontali del profilo "modelle" un volto conta solo se il
+# Nelle foto orizzontali (con zona_orizzontali) un volto conta solo se il
 # centro del suo riquadro cade in questa zona, espressa come frazioni di
 # larghezza (sinistra, destra) e altezza (alto, basso) della foto: metà
 # centrale in orizzontale, metà superiore in verticale.
@@ -86,17 +86,17 @@ def _sanitizza_nome(nome: str) -> str:
     return nome
 
 
-def _formatta_nome_modella(nome: str) -> str:
-    """Normalizza un nome per il formato "modelle": parole separate da un solo
+def _formatta_nome_pulito(nome: str) -> str:
+    """Normalizza un nome per il formato pulito: parole separate da un solo
     spazio (trattini/underscore compresi) e sempre con iniziale maiuscola,
-    anche dopo un apostrofo ("IDA HEINER" -> "Ida Heiner",
+    anche dopo apostrofo, punto o parentesi ("IDA HEINER" -> "Ida Heiner",
     "carmen dell'orefice" -> "Carmen Dell'Orefice"). Le parole tutte maiuscole
     vengono riportate in minuscolo, le altre mantengono le maiuscole interne
     ("McMenamy" resta "McMenamy")."""
     parole = [p for p in re.split(r"[\s_\-/\\:]+", nome) if p]
     return " ".join(
         re.sub(
-            r"(^|')(\w)",
+            r"(^\W*|[.(]|['’](?=\w\w))(\w)",
             lambda m: m.group(1) + m.group(2).upper(),
             parola.lower() if parola.isupper() else parola,
         )
@@ -105,19 +105,19 @@ def _formatta_nome_modella(nome: str) -> str:
 
 
 def _segmento_per_volto(
-    volto, conn, soglia_bassa: float = SOGLIA_BASSA, formato_modelle: bool = False
+    volto, conn, soglia_bassa: float = SOGLIA_BASSA, nomi_puliti: bool = False
 ) -> tuple[str | None, str]:
     """Calcola il segmento di nome file per un singolo volto rilevato.
 
     Ritorna (segmento, categoria) dove categoria è 'certo', 'ambiguo' o 'sconosciuto'.
-    Con formato_modelle un volto sconosciuto non produce alcun segmento (None)."""
+    Con nomi_puliti un volto sconosciuto non produce alcun segmento (None)."""
     candidati = calcola_candidati(volto.vettore, conn)
     stato = classifica_match(candidati, soglia_bassa=soglia_bassa)
     if stato == "sconosciuto":
-        return (None if formato_modelle else "sconosciuto"), "sconosciuto"
+        return (None if nomi_puliti else "sconosciuto"), "sconosciuto"
     punteggio = round(candidati[0].punteggio * 100)
-    if formato_modelle:
-        nome = _formatta_nome_modella(candidati[0].nome)
+    if nomi_puliti:
+        nome = _formatta_nome_pulito(candidati[0].nome)
         if stato == "ambiguo":
             return f"{nome} {punteggio} DA VERIFICARE", "ambiguo"
         return f"{nome} {punteggio}", "certo"
@@ -152,7 +152,7 @@ def _tronca_nome_file(
 def _puo_appartenere_a(nome_file: Path, stem: str) -> bool:
     """True se nome_file puo' essere l'output di una foto sorgente con questo
     stem: copia col nome originale, oppure stem seguito da "_" (formato
-    personaggi) o da " " (formato modelle)."""
+    con underscore) o da " " (formato pulito)."""
     return (
         nome_file.stem == stem
         or nome_file.name.startswith(f"{stem}_")
@@ -216,14 +216,14 @@ def rinomina_da_cartella(
     cartella_output: Path,
     percorso_db: Path,
     soglia_bassa: float = SOGLIA_BASSA,
-    formato_modelle: bool = False,
+    nomi_puliti: bool = False,
     zona_orizzontali: bool = False,
 ) -> dict[str, int]:
     """Elabora tutte le foto JPG/PNG in cartella_input (ricorsivo) e ne copia una
     versione rinominata in cartella_output, rispecchiando la struttura di
     sottocartelle dell'input. Gli originali non vengono mai modificati.
 
-    Con formato_modelle i nomi trovati sono separati da spazi e i volti
+    Con nomi_puliti i nomi trovati sono separati da spazi e i volti
     sconosciuti/assenti non aggiungono nulla al nome file. Con
     zona_orizzontali, nelle foto orizzontali i volti fuori dalla
     ZONA_ORIZZONTALI vengono ignorati (conteggiati in 'scartati_fuori_zona').
@@ -307,10 +307,10 @@ def rinomina_da_cartella(
                         continue
                     volti_validi.append(volto)
 
-            separatore = " " if formato_modelle else "_"
+            separatore = " " if nomi_puliti else "_"
             if not volti_validi:
                 riepilogo["nessun_volto"] += 1
-                if formato_modelle:
+                if nomi_puliti:
                     nuovo_nome = foto.name
                 else:
                     nuovo_nome = f"{foto.stem}_NESSUN_VOLTO{foto.suffix}"
@@ -319,7 +319,7 @@ def rinomina_da_cartella(
                     segmenti = []
                     for volto in volti_validi:
                         segmento, categoria = _segmento_per_volto(
-                            volto, conn, soglia_bassa, formato_modelle
+                            volto, conn, soglia_bassa, nomi_puliti
                         )
                         if segmento is not None:
                             segmenti.append(segmento)
@@ -340,7 +340,7 @@ def rinomina_da_cartella(
                 cartella_output_foto.mkdir(parents=True, exist_ok=True)
                 percorso_destinazione = cartella_output_foto / nuovo_nome
                 # pulisce gli output precedenti della stessa foto in entrambi i
-                # formati (personaggi "stem_..." e modelle "stem ..."/"stem.ext")
+                # formati (con underscore "stem_..." e pulito "stem ..."/"stem.ext")
                 vecchi = set(cartella_output_foto.glob(f"{foto.stem}_*{foto.suffix}"))
                 vecchi |= set(cartella_output_foto.glob(f"{foto.stem} *{foto.suffix}"))
                 vecchi |= set(cartella_output_foto.glob(f"{foto.stem}{foto.suffix}"))
@@ -419,8 +419,8 @@ def main() -> int:
         cartella_output,
         percorso_db,
         soglia_bassa,
-        formato_modelle=nome_profilo == "modelle",
-        zona_orizzontali=nome_profilo == "modelle",
+        nomi_puliti=True,
+        zona_orizzontali=True,
     )
 
     print(_formatta_riepilogo_breve(riepilogo))

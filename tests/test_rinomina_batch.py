@@ -11,7 +11,7 @@ from core.volti import VoltoRilevato
 from db.database import connetti, init_db, salva_embedding, trova_o_crea_persona
 from scripts.rinomina_batch import (
     SOGLIA_BASSA_MODELLE,
-    _formatta_nome_modella,
+    _formatta_nome_pulito,
     _formatta_riepilogo_breve,
     _sanitizza_nome,
     main,
@@ -448,7 +448,8 @@ def test_main_avvisa_se_db_vuoto_ma_procede(tmp_path, monkeypatch, capsys):
     catturato = capsys.readouterr()
     assert codice_uscita == 0
     assert "Attenzione" in catturato.out
-    assert (cartella_output / "foto_a_NESSUN_VOLTO.jpg").exists()
+    # dai droplet (main) il formato e' pulito: nessun volto -> nome originale
+    assert (cartella_output / "foto_a.jpg").exists()
 
 
 def test_molti_volti_overflow_nome_file_troncato(db_di_prova, tmp_path, monkeypatch):
@@ -750,7 +751,7 @@ def test_main_stampa_solo_riepilogo_breve_su_stdout(db_di_prova, tmp_path, monke
     testo_stdout = buffer_out.getvalue()
     assert "1 foto" in testo_stdout
     assert "senza volto a fuoco" in testo_stdout
-    assert "foto_y_NESSUN_VOLTO.jpg" not in testo_stdout
+    assert "foto_y" not in testo_stdout
 
 
 def test_main_sincronizza_col_sito_prima_di_elaborare(db_di_prova, tmp_path, monkeypatch):
@@ -816,7 +817,7 @@ def test_main_avvisa_se_sito_non_raggiungibile_ma_procede(db_di_prova, tmp_path,
 
     assert codice_uscita == 0
     assert "Sito non raggiungibile" in buffer_out.getvalue()
-    assert (cartella_output / "foto_NESSUN_VOLTO.jpg").exists()
+    assert (cartella_output / "foto.jpg").exists()
 
 
 @pytest.mark.parametrize(
@@ -829,10 +830,15 @@ def test_main_avvisa_se_sito_non_raggiungibile_ma_procede(db_di_prova, tmp_path,
         ("carmen dell'orefice", "Carmen Dell'Orefice"),
         ("América González", "América González"),
         ("Kristen McMenamy", "Kristen McMenamy"),
+        ("KATRINA O’SHEA", "Katrina O’Shea"),
+        ("S.COUPS", "S.Coups"),
+        ("Harper’s Bazaar Korea", "Harper’s Bazaar Korea"),
+        ("(STYLIST)", "(Stylist)"),
+        ("JEAN-VICTOR MEYERS", "Jean Victor Meyers"),
     ],
 )
-def test_formatta_nome_modella(nome, atteso):
-    assert _formatta_nome_modella(nome) == atteso
+def test_formatta_nome_pulito(nome, atteso):
+    assert _formatta_nome_pulito(nome) == atteso
 
 
 def _prepara_foto_modelle(db_di_prova, tmp_path, monkeypatch, nomi_db, volti):
@@ -847,7 +853,7 @@ def _prepara_foto_modelle(db_di_prova, tmp_path, monkeypatch, nomi_db, volti):
     return cartella_input, tmp_path / "output"
 
 
-def test_formato_modelle_nome_con_spazi_e_maiuscole(db_di_prova, tmp_path, monkeypatch):
+def test_nomi_puliti_nome_con_spazi_e_maiuscole(db_di_prova, tmp_path, monkeypatch):
     vettore = _vettore_normalizzato(seed=4000)
     volto = VoltoRilevato(vettore=vettore, bbox=(10, 10, 50, 50), score=0.9)
     cartella_input, cartella_output = _prepara_foto_modelle(
@@ -856,27 +862,27 @@ def test_formato_modelle_nome_con_spazi_e_maiuscole(db_di_prova, tmp_path, monke
 
     rinomina_da_cartella(
         cartella_input, cartella_output, db_di_prova,
-        soglia_bassa=SOGLIA_BASSA_MODELLE, formato_modelle=True,
+        soglia_bassa=SOGLIA_BASSA_MODELLE, nomi_puliti=True,
     )
 
     assert [f.name for f in cartella_output.glob("*.jpg")] == ["IMG_0001 Mila Van Eeten 100.jpg"]
 
 
-def test_formato_modelle_nessun_volto_lascia_nome_originale(db_di_prova, tmp_path, monkeypatch):
+def test_nomi_puliti_nessun_volto_lascia_nome_originale(db_di_prova, tmp_path, monkeypatch):
     cartella_input, cartella_output = _prepara_foto_modelle(
         db_di_prova, tmp_path, monkeypatch, [], []
     )
 
     riepilogo = rinomina_da_cartella(
         cartella_input, cartella_output, db_di_prova,
-        soglia_bassa=SOGLIA_BASSA_MODELLE, formato_modelle=True,
+        soglia_bassa=SOGLIA_BASSA_MODELLE, nomi_puliti=True,
     )
 
     assert [f.name for f in cartella_output.glob("*.jpg")] == ["IMG_0001.jpg"]
     assert riepilogo["nessun_volto"] == 1
 
 
-def test_formato_modelle_sconosciuto_non_scrive_nulla(db_di_prova, tmp_path, monkeypatch):
+def test_nomi_puliti_sconosciuto_non_scrive_nulla(db_di_prova, tmp_path, monkeypatch):
     """Un volto noto e uno sconosciuto: nel nome finisce solo quello noto."""
     vettore_noto = _vettore_normalizzato(seed=4100)
     base_estranea = _vettore_normalizzato(seed=4102)
@@ -895,7 +901,7 @@ def test_formato_modelle_sconosciuto_non_scrive_nulla(db_di_prova, tmp_path, mon
 
     riepilogo = rinomina_da_cartella(
         cartella_input, cartella_output, db_di_prova,
-        soglia_bassa=SOGLIA_BASSA_MODELLE, formato_modelle=True,
+        soglia_bassa=SOGLIA_BASSA_MODELLE, nomi_puliti=True,
     )
 
     assert [f.name for f in cartella_output.glob("*.jpg")] == ["IMG_0001 Bella Hadid 100.jpg"]
@@ -903,7 +909,7 @@ def test_formato_modelle_sconosciuto_non_scrive_nulla(db_di_prova, tmp_path, mon
     assert riepilogo["sconosciuto"] == 1
 
 
-def test_formato_modelle_rerun_sostituisce_output_precedenti(db_di_prova, tmp_path, monkeypatch):
+def test_nomi_puliti_rerun_sostituisce_output_precedenti(db_di_prova, tmp_path, monkeypatch):
     """Rieseguendo su una cartella di output che contiene gia' output vecchi
     (formato underscore o copia col nome originale) resta un solo file."""
     vettore = _vettore_normalizzato(seed=4200)
@@ -916,7 +922,7 @@ def test_formato_modelle_rerun_sostituisce_output_precedenti(db_di_prova, tmp_pa
 
     rinomina_da_cartella(
         cartella_input, cartella_output, db_di_prova,
-        soglia_bassa=SOGLIA_BASSA_MODELLE, formato_modelle=True,
+        soglia_bassa=SOGLIA_BASSA_MODELLE, nomi_puliti=True,
     )
 
     assert [f.name for f in cartella_output.glob("*.jpg")] == ["IMG_0001 Anok Yai 100.jpg"]
@@ -938,7 +944,7 @@ def _prepara_orizzontale(db_di_prova, tmp_path, monkeypatch, bbox, dimensione=(4
 def _rinomina_modelle(cartella_input, cartella_output, percorso_db):
     return rinomina_da_cartella(
         cartella_input, cartella_output, percorso_db,
-        soglia_bassa=SOGLIA_BASSA_MODELLE, formato_modelle=True, zona_orizzontali=True,
+        soglia_bassa=SOGLIA_BASSA_MODELLE, nomi_puliti=True, zona_orizzontali=True,
     )
 
 
