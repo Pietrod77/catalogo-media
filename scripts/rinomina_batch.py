@@ -19,7 +19,9 @@ Sempre per il profilo "modelle" il nome file e' "pulito" (vedi
 formato_modelle): i segmenti sono separati da spazi, i nomi hanno sempre
 l'iniziale maiuscola ("Mila van Eeten" -> "Mila Van Eeten") e i volti
 sconosciuti/assenti non aggiungono nulla, quindi una foto senza nessun nome
-riconosciuto mantiene il nome originale.
+riconosciuto mantiene il nome originale. Inoltre, nelle foto orizzontali
+del profilo "modelle" si considerano solo i volti al centro nella parte alta
+(vedi ZONA_ORIZZONTALI): la modella e' li', gli altri volti sono di contorno.
 
 Prima di elaborare le foto, si sincronizza col sito (NAS) per scaricare i
 nomi confermati li' nel frattempo: cosi' il droplet riconosce anche le
@@ -64,6 +66,16 @@ LIMITE_BYTE_NOME_FILE = 200
 # 0,70% e il 3,25% dell'area della foto, tutti gli altri (sfondo/sfocati) tra lo
 # 0,02% e lo 0,22% — soglia scelta nel mezzo di quel salto.
 RAPPORTO_AREA_MINIMO = 0.004
+
+# Nelle foto orizzontali del profilo "modelle" un volto conta solo se il
+# centro del suo riquadro cade in questa zona, espressa come frazioni di
+# larghezza (sinistra, destra) e altezza (alto, basso) della foto: metà
+# centrale in orizzontale, metà superiore in verticale.
+ZONA_ORIZZONTALI = (0.25, 0.75, 0.0, 0.5)
+
+# Valori del tag EXIF Orientation per cui la foto va ruotata di 90°:
+# cv2.imread applica la rotazione, quindi larghezza e altezza si scambiano.
+_ORIENTAMENTI_RUOTATI = (5, 6, 7, 8)
 
 
 def _sanitizza_nome(nome: str) -> str:
@@ -148,6 +160,27 @@ def _puo_appartenere_a(nome_file: Path, stem: str) -> bool:
     )
 
 
+def _dimensioni_orientate(foto: Path) -> tuple[int, int]:
+    """(larghezza, altezza) della foto come la vede cv2.imread, cioe' dopo
+    aver applicato la rotazione EXIF (i riquadri dei volti sono in quel
+    sistema di coordinate)."""
+    with Image.open(foto) as immagine:
+        larghezza, altezza = immagine.size
+        orientamento = immagine.getexif().get(0x0112)
+    if orientamento in _ORIENTAMENTI_RUOTATI:
+        return altezza, larghezza
+    return larghezza, altezza
+
+
+def _in_zona_orizzontali(bbox, larghezza: int, altezza: int) -> bool:
+    """True se il centro del riquadro cade nella ZONA_ORIZZONTALI."""
+    x1, y1, x2, y2 = bbox
+    sinistra, destra, alto, basso = ZONA_ORIZZONTALI
+    centro_x = (x1 + x2) / 2 / larghezza
+    centro_y = (y1 + y2) / 2 / altezza
+    return sinistra <= centro_x <= destra and alto <= centro_y <= basso
+
+
 def _pluralizza(numero: int, singolare: str, plurale: str) -> str:
     return singolare if numero == 1 else plurale
 
@@ -184,20 +217,24 @@ def rinomina_da_cartella(
     percorso_db: Path,
     soglia_bassa: float = SOGLIA_BASSA,
     formato_modelle: bool = False,
+    zona_orizzontali: bool = False,
 ) -> dict[str, int]:
     """Elabora tutte le foto JPG/PNG in cartella_input (ricorsivo) e ne copia una
     versione rinominata in cartella_output, rispecchiando la struttura di
     sottocartelle dell'input. Gli originali non vengono mai modificati.
 
     Con formato_modelle i nomi trovati sono separati da spazi e i volti
-    sconosciuti/assenti non aggiungono nulla al nome file.
+    sconosciuti/assenti non aggiungono nulla al nome file. Con
+    zona_orizzontali, nelle foto orizzontali i volti fuori dalla
+    ZONA_ORIZZONTALI vengono ignorati (conteggiati in 'scartati_fuori_zona').
 
     Ritorna un riepilogo: {'foto_totali': N, 'certo': N, 'ambiguo': N,
     'sconosciuto': N, 'nessun_volto': N, 'scartati_piccoli_sfondo': N,
+    'scartati_fuori_zona': N,
     'errore_lettura_immagine': N, 'errore_riconoscimento': N,
     'errore_copia': N}.
-    I conteggi certo/ambiguo/sconosciuto/nessun_volto/scartati_piccoli_sfondo
-    sono per volto (una foto con più volti può contribuire a più categorie);
+    I conteggi certo/ambiguo/sconosciuto/nessun_volto/scartati_piccoli_sfondo/
+    scartati_fuori_zona sono per volto (una foto con più volti può contribuire a più categorie);
     foto_totali, errore_lettura_immagine (fallimento di rileva_volti),
     errore_riconoscimento (fallimento nel confronto col DB per uno dei volti)
     ed errore_copia (fallimento nella creazione della cartella o nella copia
@@ -211,6 +248,7 @@ def rinomina_da_cartella(
         "sconosciuto": 0,
         "nessun_volto": 0,
         "scartati_piccoli_sfondo": 0,
+        "scartati_fuori_zona": 0,
         "errore_lettura_immagine": 0,
         "errore_riconoscimento": 0,
         "errore_copia": 0,
@@ -242,8 +280,9 @@ def rinomina_da_cartella(
 
             volti_validi = []
             if volti:
-                larghezza_immagine, altezza_immagine = Image.open(foto).size
+                larghezza_immagine, altezza_immagine = _dimensioni_orientate(foto)
                 area_immagine = larghezza_immagine * altezza_immagine
+                solo_zona = zona_orizzontali and larghezza_immagine > altezza_immagine
                 for volto in volti:
                     x1, y1, x2, y2 = volto.bbox
                     area_volto = max(0, x2 - x1) * max(0, y2 - y1)
@@ -253,6 +292,16 @@ def rinomina_da_cartella(
                         print(
                             f"[scartato_piccolo_sfondo] {foto.name}: "
                             f"area {rapporto*100:.2f}% sotto soglia {RAPPORTO_AREA_MINIMO*100:.2f}%",
+                            file=sys.stderr,
+                        )
+                        continue
+                    if solo_zona and not _in_zona_orizzontali(
+                        volto.bbox, larghezza_immagine, altezza_immagine
+                    ):
+                        riepilogo["scartati_fuori_zona"] += 1
+                        print(
+                            f"[scartato_fuori_zona] {foto.name}: volto fuori dal centro-alto "
+                            "di una foto orizzontale",
                             file=sys.stderr,
                         )
                         continue
@@ -371,6 +420,7 @@ def main() -> int:
         percorso_db,
         soglia_bassa,
         formato_modelle=nome_profilo == "modelle",
+        zona_orizzontali=nome_profilo == "modelle",
     )
 
     print(_formatta_riepilogo_breve(riepilogo))

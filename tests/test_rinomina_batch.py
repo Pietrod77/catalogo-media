@@ -920,3 +920,96 @@ def test_formato_modelle_rerun_sostituisce_output_precedenti(db_di_prova, tmp_pa
     )
 
     assert [f.name for f in cartella_output.glob("*.jpg")] == ["IMG_0001 Anok Yai 100.jpg"]
+
+
+def _prepara_orizzontale(db_di_prova, tmp_path, monkeypatch, bbox, dimensione=(400, 200)):
+    vettore = _vettore_normalizzato(seed=5000)
+    conn = connetti(db_di_prova)
+    id_persona = trova_o_crea_persona(conn, "Anok Yai")
+    salva_embedding(conn, id_persona, vettore, "anok_0.jpg", "batch_iniziale")
+    conn.close()
+    volto = VoltoRilevato(vettore=vettore, bbox=bbox, score=0.9)
+    monkeypatch.setattr("scripts.rinomina_batch.rileva_volti", lambda percorso: [volto])
+    cartella_input = tmp_path / "input"
+    _crea_immagine_prova(cartella_input / "IMG_0002.jpg", dimensione=dimensione)
+    return cartella_input, tmp_path / "output"
+
+
+def _rinomina_modelle(cartella_input, cartella_output, percorso_db):
+    return rinomina_da_cartella(
+        cartella_input, cartella_output, percorso_db,
+        soglia_bassa=SOGLIA_BASSA_MODELLE, formato_modelle=True, zona_orizzontali=True,
+    )
+
+
+def test_orizzontale_volto_centro_alto_riconosciuto(db_di_prova, tmp_path, monkeypatch):
+    # foto 400x200, volto centrato in (200, 50): centro orizzontale, parte alta
+    cartella_input, cartella_output = _prepara_orizzontale(
+        db_di_prova, tmp_path, monkeypatch, bbox=(180, 30, 220, 70)
+    )
+
+    riepilogo = _rinomina_modelle(cartella_input, cartella_output, db_di_prova)
+
+    assert [f.name for f in cartella_output.glob("*.jpg")] == ["IMG_0002 Anok Yai 100.jpg"]
+    assert riepilogo["scartati_fuori_zona"] == 0
+
+
+@pytest.mark.parametrize(
+    "bbox",
+    [
+        (10, 30, 50, 70),  # a sinistra, in alto
+        (350, 30, 390, 70),  # a destra, in alto
+        (180, 130, 220, 170),  # al centro, in basso
+    ],
+)
+def test_orizzontale_volto_fuori_zona_ignorato(db_di_prova, tmp_path, monkeypatch, bbox):
+    cartella_input, cartella_output = _prepara_orizzontale(
+        db_di_prova, tmp_path, monkeypatch, bbox=bbox
+    )
+
+    riepilogo = _rinomina_modelle(cartella_input, cartella_output, db_di_prova)
+
+    assert [f.name for f in cartella_output.glob("*.jpg")] == ["IMG_0002.jpg"]
+    assert riepilogo["scartati_fuori_zona"] == 1
+    assert riepilogo["nessun_volto"] == 1
+
+
+def test_verticale_nessun_filtro_di_zona(db_di_prova, tmp_path, monkeypatch):
+    # foto 200x400 (verticale), volto in basso a sinistra: resta valido
+    cartella_input, cartella_output = _prepara_orizzontale(
+        db_di_prova, tmp_path, monkeypatch, bbox=(10, 330, 50, 370), dimensione=(200, 400)
+    )
+
+    riepilogo = _rinomina_modelle(cartella_input, cartella_output, db_di_prova)
+
+    assert [f.name for f in cartella_output.glob("*.jpg")] == ["IMG_0002 Anok Yai 100.jpg"]
+    assert riepilogo["scartati_fuori_zona"] == 0
+
+
+def test_orizzontale_senza_opzione_nessun_filtro(db_di_prova, tmp_path, monkeypatch):
+    """Il profilo personaggi (zona_orizzontali=False) non filtra per posizione."""
+    cartella_input, cartella_output = _prepara_orizzontale(
+        db_di_prova, tmp_path, monkeypatch, bbox=(10, 130, 50, 170)
+    )
+
+    rinomina_da_cartella(cartella_input, cartella_output, db_di_prova)
+
+    assert [f.name for f in cartella_output.glob("*.jpg")] == ["IMG_0002_Anok_Yai_100.jpg"]
+
+
+def test_exif_ruotata_trattata_come_verticale(db_di_prova, tmp_path, monkeypatch):
+    """Una foto salvata 400x200 con EXIF Orientation=6 viene letta da cv2 gia'
+    ruotata (200x400, verticale): niente filtro di zona."""
+    cartella_input, cartella_output = _prepara_orizzontale(
+        db_di_prova, tmp_path, monkeypatch, bbox=(10, 330, 50, 370)
+    )
+    foto = cartella_input / "IMG_0002.jpg"
+    immagine = Image.new("RGB", (400, 200), color="blue")
+    exif = immagine.getexif()
+    exif[0x0112] = 6
+    immagine.save(foto, exif=exif)
+
+    riepilogo = _rinomina_modelle(cartella_input, cartella_output, db_di_prova)
+
+    assert [f.name for f in cartella_output.glob("*.jpg")] == ["IMG_0002 Anok Yai 100.jpg"]
+    assert riepilogo["scartati_fuori_zona"] == 0
